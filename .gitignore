@@ -13,6 +13,10 @@
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 
+# IntelliJ ANTLR plugin recognizer default locations:
+core/gen/
+core/src/main/antlr4/org/evomaster/core/parser/gen
+
 **/*.DS_Store
 /.idea/
 .idea/
@@ -51,6 +55,7 @@ experiments/target/
 
 /core-tests/e2e-tests/spring/spring-rest-openapi-v3/target
 /core-tests/e2e-tests/spring/spring-graphql/target
+/core-tests/e2e-tests/spring/spring-mcp-bb/target/
 /core-tests/e2e-tests/ci-utils/target
 
 /core-tests/core-it/target/
@@ -105,6 +110,7 @@ Migrations/
 /core-tests/e2e-tests/spring/spring-web/target/
 /core-tests/e2e-tests/spring/spring-rest-mongo/target/
 /core-tests/e2e-tests/spring/spring-rest-opensearch/target/
+/core-tests/e2e-tests/spring/spring-rest-redis/target/
 /core-tests/client-java/target/
 /core-tests/client-java/dependencies/target/
 /core-tests/client-java/sql-dto/target/
@@ -112,6 +118,8 @@ Migrations/
 /core-tests/client-java/distance-heuristics/target/
 /em.toml
 
+/core-extra/arazzo-parser/target/
+/core-extra/asyncapi-parser/target/
 /core-extra/solver/target/
 /em.yaml
 /core-tests/e2e-tests/spring/spring-rest-openapi-v2/em.yaml
@@ -127,6 +135,16 @@ Migrations/
 /core-tests/e2e-tests/spring/spring-rest-bb/javascript/node_modules/
 /core-tests/e2e-tests/spring/spring-rest-bb/javascript/generated/
 /core-tests/e2e-tests/spring/spring-rest-bb/python/generated/
+
+/core-tests/e2e-tests/python-rest-bb/target/
+/core-tests/e2e-tests/python-rest-bb/python/generated/
+/core-tests/e2e-tests/python-rest-bb/maven/src/
+/core-tests/e2e-tests/python-rest-bb/maven/target/
+/core-tests/e2e-tests/python-rest-bb/javascript/node_modules/
+/core-tests/e2e-tests/python-rest-bb/javascript/generated/
+/core-tests/e2e-tests/python-rest-bb/sut/django/db.sqlite3
+/core-tests/e2e-tests/python-rest-bb/sut/django/.venv/
+/core-tests/e2e-tests/python-rest-bb/sut/django/**/__pycache__/
 
 /client-java/test-utils-java/target/
 
@@ -150,6 +168,7 @@ Migrations/
 /core-tests/e2e-tests/spring/spring-rest-multidb/target/
 /core-tests/e2e-tests/spring/spring-rest-h2-v2/target/
 /core-tests/e2e-tests/spring/spring-rest-rsa/target/
+/core-tests/e2e-tests/spring/spring-rest-dynamodb/target/
 /core-tests/e2e-tests/spring/spring-rest-h2-v1/em.yaml
 /core-tests/integration-tests/core-it/target/
 /core-tests/integration-tests/core-it/em.yaml
@@ -158,4 +177,17 @@ client-java/sql/target
 client-java/sql-dto/target
 client-java/distance-heuristics/target
 client-java/test-old-libraries/target
+/client-java/postgres-test-utils/target/
 core-tests/e2e-tests/spring/spring-rest-mysql/target
+/core-tests/jdk-8/spring-rest-openapi-v2/target/
+/core-tests/jdk-8/spring-rest-openapi-v2-driver/target/
+/core-tests/jdk-8/spring-rest-openapi-v2-sut/target/
+/core-tests/jdk-8/spring-rest-openapi-v2-tests/target/
+/pypi-distribution/dist/
+/pypi-distribution/src/evomaster.egg-info/
+/build/
+/pypi-distribution/dmg/
+/pypi-distribution/src/evomaster/dmg/
+/pypi-distribution/src/evomaster/release/
+/pypi-distribution/em.yaml
+/core-extra/shared/target/

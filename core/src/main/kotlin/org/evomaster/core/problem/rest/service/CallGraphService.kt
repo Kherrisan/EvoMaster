@@ -24,12 +24,15 @@ class CallGraphService {
      */
     private val deleteDependencies = mutableMapOf<Endpoint, RestCallAction>()
 
+    private lateinit var endpointsInUse: Set<Endpoint>
 
     @PostConstruct
     private fun init() {
 
         val calls = sampler.seeAvailableActions()
             .filterIsInstance<RestCallAction>()
+
+        endpointsInUse = calls.map{it.endpoint}.toSet()
 
         val deletes = calls.filter { it.verb == HttpVerb.DELETE }
         val creates = calls.filter { it.verb == HttpVerb.POST || it.verb == HttpVerb.PUT }
@@ -60,6 +63,55 @@ class CallGraphService {
                 deleteDependencies[it.endpoint] = del
             }
         }
+    }
+
+    fun endpointsForPath(path: RestPath): List<Endpoint> {
+        return endpointsInUse
+            .filter { it.path == path }
+    }
+
+    /**
+     * Resolve a raw path or URL (e.g. a Location header value, absolute or relative)
+     * against the RestPath templates declared in the schema.
+     * Returns the most specific matching template (fewest path parameters), or null if none match.
+     */
+    fun resolveDeclaredPath(rawPathOrUrl: String): RestPath? {
+        val path = try {
+            java.net.URI(rawPathOrUrl).rawPath?.takeIf { it.isNotBlank() } ?: rawPathOrUrl
+        } catch (e: Exception) {
+            rawPathOrUrl
+        }
+        return endpointsInUse.asSequence()
+            .map { it.path }
+            .distinct()
+            .filter { it.matches(path) }
+            .minByOrNull { it.getParameterTokens().size }
+    }
+
+    /**
+     * Check if the given endpoint(verb,path) is declared in the schema.
+     * This is regardless of whether some endpoints were marked as ignored/to-skip
+     * during the fuzzing
+     */
+    fun isDeclared(verb: HttpVerb, path: RestPath): Boolean {
+        return isInUse(verb, path) || sampler.skippedEndpoints.contains(Endpoint(verb, path))
+    }
+
+    /**
+     * When fuzzing an API with N endpoint, we might select a subset K of endpoints in use.
+     * Check if input endpoint is among those.
+     */
+    fun isInUse(verb: HttpVerb, path: RestPath): Boolean {
+        return endpointsInUse.any { it.path == path && it.verb == verb }
+    }
+
+    fun findStrictTopGETResourceAncestor(path: RestPath) : RestCallAction?{
+        return sampler.seeAvailableActions()
+            .filterIsInstance<RestCallAction>()
+            .filter { it.verb == HttpVerb.GET }
+            .filter { it.path.isStrictlyAncestorOf(path)}
+            .filter { it.path.isLastElementAParameter() }
+            .minByOrNull { it.path.levels() }
     }
 
     /**

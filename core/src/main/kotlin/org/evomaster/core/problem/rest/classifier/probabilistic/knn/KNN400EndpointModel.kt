@@ -2,7 +2,6 @@ package org.evomaster.core.problem.rest.classifier.probabilistic.knn
 
 import org.evomaster.core.EMConfig
 import org.evomaster.core.problem.rest.classifier.AIResponseClassification
-import org.evomaster.core.problem.rest.classifier.probabilistic.InputEncoderUtilWrapper
 import org.evomaster.core.problem.rest.classifier.probabilistic.AbstractProbabilistic400EndpointModel
 import org.evomaster.core.problem.rest.data.Endpoint
 import org.evomaster.core.problem.rest.data.RestCallAction
@@ -19,21 +18,22 @@ import kotlin.math.sqrt
  */
 class KNN400EndpointModel (
     endpoint: Endpoint,
-    warmup: Int = 10,
+    warmup: Int,
+    modelKeys: List<String>? = null,
     dimension: Int? = null,
-    encoderType: EMConfig.EncoderType= EMConfig.EncoderType.RAW,
-    metricType: EMConfig.AIClassificationMetrics = EMConfig.AIClassificationMetrics.TIME_WINDOW,
+    encoderType: EMConfig.EncoderType,
+    metricType: EMConfig.AIClassificationMetrics,
     private val k: Int = 3,
-    private val maxStoredSamples: Int = 10000,
+    private val maxStoredSamples: Int = 1000, // Values more than 1000 make the classification very time-consuming
     randomness: Randomness
 ): AbstractProbabilistic400EndpointModel(
-    endpoint, warmup, dimension, encoderType, metricType, randomness) {
+    endpoint, warmup, modelKeys, dimension, encoderType, metricType, randomness) {
 
     /**
      * Stores the training samples for this endpoint model.
      * Each element is a pair of:
      *  - List<Double>: the encoded feature vector
-     *  - Int         : the corresponding status code (i.e., HTTP response)
+     *  - Int: the corresponding status code (i.e., HTTP response)
      */
     val samples = mutableListOf<Pair<List<Double>, Int>>()
 
@@ -53,10 +53,9 @@ class KNN400EndpointModel (
             return AIResponseClassification()
         }
 
-        val encoder = InputEncoderUtilWrapper(input, encoderType = encoderType)
-        val inputVector = encoder.encode()
+        initializeIfNeeded(input)
 
-        initializeIfNeeded(inputVector)
+        val inputVector = encodeUsingModelKeys(input)
 
         if (modelMetrics.totalSentRequests < warmup) {
             // Return equal probabilities during warmup
@@ -96,10 +95,9 @@ class KNN400EndpointModel (
             return
         }
 
-        val encoder = InputEncoderUtilWrapper(input, encoderType = encoderType)
-        val inputVector = encoder.encode()
+        initializeIfNeeded(input)
 
-        initializeIfNeeded(inputVector)
+        val inputVector = encodeUsingModelKeys(input)
 
         if (inputVector.size != this.dimension) {
             throw IllegalArgumentException("Expected input vector of size ${this.dimension} but got ${inputVector.size}")

@@ -29,9 +29,9 @@ import org.evomaster.client.java.sql.SqlScriptRunner
 import org.evomaster.client.java.sql.DbInfoExtractor
 import org.evomaster.core.BaseModule
 import org.evomaster.core.EMConfig
-import org.evomaster.core.sql.SqlAction
-import org.evomaster.core.sql.SqlInsertBuilder
-import org.evomaster.core.sql.schema.ColumnDataType
+import org.evomaster.core.database.sql.SqlAction
+import org.evomaster.core.database.sql.SqlInsertBuilder
+import org.evomaster.core.database.sql.schema.ColumnDataType
 import org.evomaster.core.problem.rest.data.RestCallAction
 import org.evomaster.core.problem.rest.data.RestIndividual
 import org.evomaster.core.problem.rest.resource.RestResourceCalls
@@ -42,7 +42,7 @@ import org.evomaster.core.search.EvaluatedIndividual
 import org.evomaster.core.search.impact.impactinfocollection.ImpactsOfIndividual
 import org.evomaster.core.search.service.Archive
 import org.evomaster.core.search.service.Randomness
-import org.evomaster.core.search.service.SearchTimeController
+import org.evomaster.core.search.service.time.SearchTimeController
 import org.evomaster.core.search.service.mutator.StandardMutator
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
@@ -276,7 +276,8 @@ abstract class RestIndividualTestBase {
         val defaultConfigs : Array<String> = listOf(
             "--useTimeInFeedbackSampling=false",
             "--seed=42",
-            "--stoppingCriterion=ACTION_EVALUATIONS"
+            "--stoppingCriterion=ACTION_EVALUATIONS",
+            "--blackBox=false"
         ).plus(config()).toTypedArray()
 
         val modules = listOf(BaseModule(defaultConfigs)).plus(getProblemModule()).plus(FakeModule(
@@ -674,6 +675,10 @@ abstract class RestIndividualTestBase {
         }
 
         override fun executeMongoDatabaseInsertions(dto: MongoDatabaseCommandDto): MongoInsertionResultsDto? {
+            return null
+        }
+
+        override fun executeRedisDatabaseInsertions(dto: RedisDatabaseCommandsDto): RedisInsertionResultsDto? {
             return null
         }
 

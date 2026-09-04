@@ -1,13 +1,12 @@
 package org.evomaster.core.problem.rest.resource
 
 import org.evomaster.core.Lazy
-import org.evomaster.core.sql.SqlAction
+import org.evomaster.core.database.sql.SqlAction
 import org.evomaster.core.logging.LoggingUtil
-import org.evomaster.core.problem.rest.*
 import org.evomaster.core.problem.rest.param.BodyParam
 import org.evomaster.core.problem.api.param.Param
 import org.evomaster.core.problem.enterprise.EnterpriseActionGroup
-import org.evomaster.core.problem.rest.builder.CreateResourceUtils
+import org.evomaster.core.problem.rest.builder.DynamicPathUtils
 import org.evomaster.core.problem.rest.data.HttpVerb
 import org.evomaster.core.problem.rest.data.RestCallAction
 import org.evomaster.core.problem.rest.data.RestCallResult
@@ -17,6 +16,7 @@ import org.evomaster.core.problem.rest.resource.dependency.*
 import org.evomaster.core.problem.util.ParamUtil
 import org.evomaster.core.problem.rest.util.ParserUtil
 import org.evomaster.core.problem.util.RestResourceTemplateHandler
+import org.evomaster.core.search.Individual
 import org.evomaster.core.search.action.ActionFilter
 import org.evomaster.core.search.action.ActionResult
 import org.evomaster.core.search.gene.Gene
@@ -24,8 +24,8 @@ import org.evomaster.core.search.gene.ObjectGene
 import org.evomaster.core.search.gene.sql.SqlForeignKeyGene
 import org.evomaster.core.search.gene.sql.SqlPrimaryKeyGene
 import org.evomaster.core.search.service.Randomness
-import org.evomaster.core.sql.SqlActionUtils
-import org.evomaster.core.sql.schema.TableId
+import org.evomaster.core.database.sql.SqlActionUtils
+import org.evomaster.core.database.sql.schema.TableId
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -165,7 +165,7 @@ open class RestResourceNode(
     /**
      * @return mutable genes in [dbactions] and they do not bind with rest actions.
      */
-    fun getMutableSQLGenes(dbactions: List<SqlAction>, template: String, is2POST : Boolean) : List<out Gene>{
+    fun getMutableSQLGenes(dbactions: List<SqlAction>, template: String, is2POST : Boolean) : List<Gene>{
 
         val related = getPossiblyBoundParams(template, is2POST, null).map {
             resourceToTable.paramToTable[it.key]
@@ -181,7 +181,7 @@ open class RestResourceNode(
      * @return mutable genes in [actions] which perform action on current [this] resource node
      *          with [callsTemplate] template, e.g., POST-GET
      */
-    private fun getMutableRestGenes(actions: List<RestCallAction>, template: String) : List<out Gene>{
+    private fun getMutableRestGenes(actions: List<RestCallAction>, template: String) : List<Gene>{
 
         if (!RestResourceTemplateHandler.isNotSingleAction(template)) return actions.flatMap(RestCallAction::seeTopGenes).filter(Gene::isMutable)
 
@@ -476,7 +476,7 @@ open class RestResourceNode(
         if (actions.size == 1) return actions.first()
 
         (1 until actions.size).forEach { i->
-            CreateResourceUtils.linkDynamicCreateResource(actions[i-1], actions[i])
+            DynamicPathUtils.linkDynamicCreateResource(actions[i-1], actions[i])
         }
 
         return actions.last()
@@ -516,7 +516,7 @@ open class RestResourceNode(
         if (ats.size == 2){
             val action = createActionByVerb(ats[1], randomness)
             if (lastPost != null)
-                CreateResourceUtils.linkDynamicCreateResource(lastPost, action)
+                DynamicPathUtils.linkDynamicCreateResource(lastPost, action)
             results.add(action)
         }else if (ats.size > 2){
             throw IllegalStateException("the size of action with $template should be less than 2, but it is ${ats.size}")
@@ -524,9 +524,9 @@ open class RestResourceNode(
 
         //append extra patch
         if (ats.last() == HttpVerb.PATCH && results.size +1 <= maxTestSize && randomness.nextBoolean(PROB_EXTRA_PATCH)){
-            val second =  results.last().copy() as RestCallAction
+            val second =  results.last().copyKeepingSameWeakRef()
             if (lastPost != null)
-                CreateResourceUtils.linkDynamicCreateResource(lastPost, second)
+                DynamicPathUtils.linkDynamicCreateResource(lastPost, second)
             results.add(second)
         }
 
@@ -650,8 +650,27 @@ open class RestResourceNode(
      *  this method is to update [actions] in this node based on the updated [action]
      */
     open fun updateActionsWithAdditionalParams(action: RestCallAction){
+
         val org = actions.find {  it.verb == action.verb }
-        org?:throw IllegalStateException("cannot find the action (${action.getName()}) in the node $path")
+
+        if(org == null){
+            if(!action.isMounted()) {
+                throw IllegalStateException("cannot find the action (${action.getName()}) in the node $path")
+            }
+            val sgs = (action.getRoot() as Individual).searchGlobalState
+                ?: return
+            if(sgs.epc.isInSearch()){
+                throw IllegalStateException("cannot find the action (${action.getName()}) in the node $path")
+            } else {
+                /*
+                    in other phases like Security, we might build actions that are not defined in the schema.
+                    so should not crash.
+                    but this shouldn't happen during the search
+                 */
+                return
+            }
+        }
+
         if (action.parameters.size > org.parameters.size){
             originalActions.add(org)
             actions.remove(org)
@@ -801,8 +820,26 @@ open class RestResourceNode(
      * @return whether there exists any additional parameters by comparing with [action]?
      */
     fun updateAdditionalParams(action: RestCallAction) : Map<String, ParamInfo>?{
-        (actions.find { it.getName() == action.getName() }
-                ?: throw IllegalArgumentException("cannot find the action ${action.getName()} in the resource ${getName()}")) as RestCallAction
+
+        val found = (actions.find { it.getName() == action.getName() })
+
+        if(found == null){
+            if(!action.isMounted()) {
+                throw IllegalStateException("cannot find the action (${action.getName()}) in the resource ${getName()}")
+            }
+            val sgs = (action.getRoot() as Individual).searchGlobalState
+                ?: return null
+            if(sgs.epc.isInSearch()){
+                throw IllegalStateException("cannot find the action (${action.getName()}) in the resource ${getName()}")
+            } else {
+                /*
+                    in other phases like Security, we might build actions that are not defined in the schema.
+                    so should not crash.
+                    but this shouldn't happen during the search
+                 */
+                return null
+            }
+        }
 
         val additionParams = action.parameters.filter { p-> paramsInfo[getParamId(action.parameters, p)] == null}
         if(additionParams.isEmpty()) return null

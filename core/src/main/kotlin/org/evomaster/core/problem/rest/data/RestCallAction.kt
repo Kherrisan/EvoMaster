@@ -17,6 +17,7 @@ import org.evomaster.core.problem.rest.util.ParserUtil
 import org.evomaster.core.problem.util.BindingBuilder
 import org.evomaster.core.search.action.Action
 import org.evomaster.core.search.gene.Gene
+import org.evomaster.core.search.gene.interfaces.UserExamplesGene
 import org.evomaster.core.search.gene.wrapper.OptionalGene
 import org.evomaster.core.search.service.Randomness
 import java.net.URLEncoder
@@ -72,7 +73,7 @@ class RestCallAction(
      *
      * TODO check if it could be used to handle issue in BackwardLinkReference
      */
-     private var weakReference: RestCallAction? = null
+    var weakReference: RestCallAction? = null
 ) : HttpWsAction(auth, isCleanUp, parameters) {
 
     companion object{
@@ -113,18 +114,8 @@ class RestCallAction(
         if(!isPotentialActionForCreation()){
             throw IllegalStateException("Location Ids are meaningful only for POST operations")
         }
-        //return  path.lastElement()
-        /*
-            previous was problematic, as ids were not unique. it wasn't an issue for chains, but it
-            became major issue for cleanups.
-            but, using local ids has its own issues (only defined once mounted into an individual).
-            TODO will need to check for side-effects, might require some more refactoring
-         */
-        if(weakReference != null){
-            throw IllegalStateException("'weakReference' has not been handled yet   ")
-        }
         if(!hasLocalId()){
-            throw IllegalStateException("Location ID must be present when computing a creationLocationId")
+            throw IllegalStateException("Local ID must be present when computing a creationLocationId")
         }
         val k = getLocalId()
         // TODO could skip k if non-ambiguous. otherwise, counter could start from 0 (ie need a map for k values)
@@ -138,7 +129,9 @@ class RestCallAction(
     override fun copyContent(): Action {
 
         if(weakReference != null) {
-            throw IllegalStateException("'weakReference' must handled before trying to make a copy")
+            throw IllegalStateException("'weakReference' must handled before trying to make a copy." +
+                    " If needed, should rather use copyKeepingSameWeakRef(), but that can only be done in" +
+                    " very special cases.")
         }
 
         val p = parameters.asSequence().map(Param::copy).toMutableList()
@@ -155,7 +148,7 @@ class RestCallAction(
         return "$verb:$path"
     }
 
-    override fun seeTopGenes(): List<out Gene> {
+    override fun seeTopGenes(): List<Gene> {
         return parameters.flatMap { it.seeGenes() }
     }
 
@@ -171,35 +164,9 @@ class RestCallAction(
         return path.resolveOnlyPath(parameters)
     }
 
-    /**
-     * Make sure that the path params are resolved to the same concrete values of "other".
-     * Note: "this" can be just an ancestor of "other"
-     *
-     **/
-    fun bindToSamePathResolution(other: RestCallAction) {
-        if (!this.path.isSameOrAncestorOf(other.path)) {
-            throw IllegalArgumentException("Cannot bind 2 different unrelated paths to the same path resolution: " +
-                    "${this.path} vs ${other.path}")
-        }
-        for (i in parameters.indices) {
-            val target = parameters[i]
-            if (target is PathParam) {
-                val k = other.parameters.find { p -> p is PathParam && p.name == target.name }!!
-                /*
-                    Note: even if they are referring to same path variable, it does not mean that
-                    necessarily they are represented with the same type of gene, eg., typically a StringGene.
-                    For example, they could be a ChoiceGene when dealing with "examples" or Regex when having patterns
-                    only defined on some endpoints
-                 */
-                val g = parameters[i].primaryGene()
-                g.copyValueFrom(k.primaryGene())
-                g.forceNewTaints()
-            }
-        }
-    }
 
-    fun usingSameResolvedPath(other: RestCallAction) =
-        this.resolvedOnlyPath() == other.resolvedOnlyPath()
+
+
 
     /**
     Note: in swagger the "consume" type might be missing.
@@ -434,4 +401,5 @@ class RestCallAction(
         this.weakReference = wr
         return copy
     }
+
 }

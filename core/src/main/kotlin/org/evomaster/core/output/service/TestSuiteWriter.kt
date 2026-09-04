@@ -3,14 +3,14 @@ package org.evomaster.core.output.service
 import com.google.inject.Inject
 import org.evomaster.client.java.controller.api.dto.database.operations.InsertionDto
 import org.evomaster.client.java.controller.api.dto.database.operations.MongoInsertionDto
+import org.evomaster.client.java.controller.api.dto.database.operations.RedisInsertionDto
 import org.evomaster.client.java.instrumentation.shared.ExternalServiceSharedUtils
 import org.evomaster.core.EMConfig
 import org.evomaster.core.output.*
 import org.evomaster.core.output.TestWriterUtils.getWireMockVariableName
 import org.evomaster.core.output.TestWriterUtils.handleDefaultStubForAsJavaOrKotlin
 import org.evomaster.core.output.dto.DtoWriter
-import org.evomaster.core.output.naming.NumberedTestCaseNamingStrategy
-import org.evomaster.core.output.naming.TestCaseNamingStrategyFactory
+import org.evomaster.core.llm.service.LlmService
 import org.evomaster.core.problem.api.ApiWsIndividual
 import org.evomaster.core.problem.enterprise.service.EnterpriseSampler
 import org.evomaster.core.problem.externalservice.httpws.HttpWsExternalService
@@ -21,9 +21,10 @@ import org.evomaster.core.problem.rest.data.RestIndividual
 import org.evomaster.core.problem.security.service.HttpCallbackVerifier
 import org.evomaster.core.remote.service.RemoteController
 import org.evomaster.core.search.Solution
+import org.evomaster.core.search.gene.interfaces.UserExamplesGene
 import org.evomaster.core.search.service.Sampler
-import org.evomaster.core.search.service.SearchTimeController
-import org.evomaster.core.sql.schema.TableId
+import org.evomaster.core.search.service.time.SearchTimeController
+import org.evomaster.core.database.sql.schema.TableId
 import org.evomaster.test.utils.EMTestUtils
 import org.evomaster.test.utils.SeleniumEMUtils
 import org.evomaster.test.utils.js.JsLoader
@@ -56,13 +57,25 @@ class TestSuiteWriter {
         const val pythonUtilsFilename = "$pythonUtilsFilenameNoExtension.py"
         const val javascriptUtilsFilename = "EMTestUtils.js"
 
+        /**
+         * Names of the variables, generated into each test suite, holding the per-HTTP-call
+         * client timeout. Same source as the fuzzing 'tcpTimeoutMs' option. Two unit-specific
+         * variants, as different output formats need different units.
+         */
+        const val httpTimeoutVarMs = "EM_HTTP_TIMEOUT_MS"     // milliseconds (JS/superagent)
+        const val httpTimeoutVarSeconds = "EM_HTTP_TIMEOUT_S" // seconds (Python/requests)
+
         private val log: Logger = LoggerFactory.getLogger(TestSuiteWriter::class.java)
 
-        private const val baseUrlOfSut = "baseUrlOfSut"
+        const val baseUrlOfSut = "baseUrlOfSut"
         private const val fixtureClass = "ControllerFixture"
         private const val fixture = "_fixture"
         private const val browser = "browser"
         private var containsDtos = false
+
+        private const val EXTRACT_JDK_PATH_ENV_VAR_METHOD = "extractJDKPathWithEnvVarName"
+        private const val EXTRACT_SUT_PATH_ENV_VAR_METHOD = "extractSutJarNameWithEnvVarName"
+
     }
 
     @Inject
@@ -88,6 +101,9 @@ class TestSuiteWriter {
 
     @Inject
     private lateinit var httpCallbackVerifier: HttpCallbackVerifier
+
+    @Inject
+    private lateinit var llmService: LlmService
 
 
     fun writeTests(testSuiteCode: TestSuiteCode){
@@ -131,8 +147,7 @@ class TestSuiteWriter {
     ): TestSuiteCode {
 
         val lines = Lines(config.outputFormat)
-        val testSuiteOrganizer = TestSuiteOrganizer()
-        val namingStrategy = TestCaseNamingStrategyFactory(config).create(solution)
+        val testSuiteOrganizer = TestSuiteOrganizer(config, llmService)
 
         header(solution, testSuiteFileName, lines, timestamp, controllerName)
 
@@ -147,19 +162,7 @@ class TestSuiteWriter {
 
         beforeAfterMethods(solution, controllerName, controllerInput, lines, config.outputFormat, testSuiteFileName)
 
-        //catch any sorting problems (see NPE is SortingHelper on Trello)
-        val tests = try {
-            // TODO skip to sort RPC for the moment
-                testSuiteOrganizer.sortTests(solution, namingStrategy, config.testCaseSortingStrategy)
-        } catch (ex: Exception) {
-            log.warn(
-                "A failure has occurred with the test sorting. Reverting to default settings. \n"
-                        + "Exception: ${ex.localizedMessage} \n"
-                        + "At ${ex.stackTrace.joinToString(separator = " \n -> ")}. "
-            )
-            // fallback to numbered naming strategy upon failure
-            NumberedTestCaseNamingStrategy(solution).getTestCases()
-        }
+        val tests = testSuiteOrganizer.createSortedTestCases(solution, testCaseWriter)
 
         val testSuitePath = getTestSuitePath(testSuiteFileName, config)
 
@@ -185,10 +188,16 @@ class TestSuiteWriter {
                 null
             } else {
                 lines.addEmpty(2)
+
                 val start = lines.nextLineNumber()
                 lines.add(testLines)
                 val end = lines.nextLineNumber() - 1
-                TestCaseCode(test.name,test.test,testLines.toString(), start, end)
+
+                val examples = test.test.individual.getAllActiveUsedExamples()
+                    .filterIsInstance<UserExamplesGene>()
+                    .mapNotNull { it.getValueName() }
+                    .toSet()
+                TestCaseCode(test.name,test.test,testLines.toString(), start, end, examples)
             }
         }
 
@@ -334,15 +343,25 @@ class TestSuiteWriter {
 
         lines.addBlockCommentLine(" The generated test suite contains ${solution.individuals.size} tests")
         classDescriptionEmptyLine(lines)
-        lines.addBlockCommentLine(" Covered targets: ${solution.overall.coveredTargets()}")
+        lines.addBlockCommentLine(" Covered targets: ${solution.overall.numberOfCoveredTargets()}")
         classDescriptionEmptyLine(lines)
         lines.addBlockCommentLine(" Used time: ${searchTimeController.getElapsedTime()}")
         classDescriptionEmptyLine(lines)
         lines.addBlockCommentLine(" Needed budget for current results: ${searchTimeController.neededBudget()}")
         classDescriptionEmptyLine(lines)
         lines.addBlockCommentLine(" ${solution.termination.comment}")
-        lines.endCommentBlock()
+        classDescriptionEmptyLine(lines)
 
+        if(config.couldSupportDtoForPayload() && !config.dtoForRequestPayload){
+            lines.addBlockCommentLine(" ******************************** IMPORTANT ********************************")
+            lines.addBlockCommentLine(" * If you are planning to modify these test cases manually, you might")
+            lines.addBlockCommentLine(" * want to consider using the '--dtoForRequestPayload true' option to")
+            lines.addBlockCommentLine(" * generate statically typed DTOs instead of payloads defined with strings.")
+            lines.addBlockCommentLine(" ***************************************************************************")
+            classDescriptionEmptyLine(lines)
+        }
+
+        lines.endCommentBlock()
     }
 
     /**
@@ -445,10 +464,15 @@ class TestSuiteWriter {
             addImport(EMTestUtils::class.java.name +".*", lines, true)
             addImport("org.evomaster.client.java.controller.SutHandler", lines)
 
+            // BigInteger and BigDecimal
+            addImport("java.math.BigDecimal", lines)
+            addImport("java.math.BigInteger", lines)
+
             if (useRestAssured()) {
                 addImport("io.restassured.RestAssured", lines)
                 addImport("io.restassured.RestAssured.given", lines, true)
                 addImport("io.restassured.response.ValidatableResponse", lines)
+                addImport("io.restassured.config.HttpClientConfig", lines)
             }
 
             if ((config.isEnabledExternalServiceMocking() && solution.needWireMockServers())
@@ -480,17 +504,25 @@ class TestSuiteWriter {
                 addImport(MongoInsertionDto::class.qualifiedName!!, lines)
             }
 
+            if (solution.hasAnyRedisAction()) {
+                addImport("org.evomaster.client.java.controller.redis.dsl.RedisDsl.redis", lines, true)
+                addImport("org.evomaster.client.java.controller.api.dto.database.operations.RedisInsertionResultsDto", lines)
+                addImport(RedisInsertionDto::class.qualifiedName!!, lines)
+            }
+
+            if (useRestAssured()) {
+                addImport("io.restassured.config.JsonConfig", lines)
+                addImport("io.restassured.path.json.config.JsonPathConfig", lines)
+                addImport("io.restassured.config.RedirectConfig.redirectConfig", lines, true)
+                addImport("io.restassured.config.EncoderConfig", lines)
+                addImport("io.restassured.http.ContentType", lines)
+            }
+
             if (config.enableBasicAssertions) {
 
                 if(useHamcrest()) {
+                    addImport("org.hamcrest.Matchers", lines, false)
                     addImport("org.hamcrest.Matchers.*", lines, true)
-                }
-
-                //addImport("org.hamcrest.core.AnyOf.anyOf", lines, true)
-                if (useRestAssured()) {
-                    addImport("io.restassured.config.JsonConfig", lines)
-                    addImport("io.restassured.path.json.config.JsonPathConfig", lines)
-                    addImport("io.restassured.config.RedirectConfig.redirectConfig", lines, true)
                 }
 
                 addImport("org.evomaster.client.java.controller.contentMatchers.NumberMatcher.*", lines, true)
@@ -507,7 +539,14 @@ class TestSuiteWriter {
         }
 
         if (format.isJavaScript()) {
+            lines.add("process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';")
+            if (format.isPlaywright()) {
+                lines.add("const { test, expect } = require(\"@playwright/test\");")
+            } else {
             lines.add("const superagent = require(\"superagent\");")
+            // HTTP client timeout (ms)
+            lines.add("const $httpTimeoutVarMs = ${config.tcpTimeoutMs};")
+            }
 
             val jsUtils = JsLoader::class.java.getResource("/$javascriptUtilsFilename").readText()
             saveToDisk(jsUtils, Paths.get(config.outputFolder, javascriptUtilsFilename))
@@ -516,7 +555,8 @@ class TestSuiteWriter {
             if (controllerName != null) {
                 lines.add("const $controllerName = require(\"${config.jsControllerPath}\");")
             }
-            if (config.testTimeout > 0) {
+            // Playwright has its own test runner and does not use Jest
+            if (config.testTimeout > 0 && !format.isPlaywright()) {
                 lines.add("jest.setTimeout(${config.testTimeout * 1000});")
             }
         }
@@ -537,6 +577,11 @@ class TestSuiteWriter {
             lines.add("import json")
             lines.add("import unittest")
             lines.add("import requests")
+
+            if(config.sqli){
+                lines.add("import time")
+            }
+
             if (config.testTimeout > 0) {
                 //see https://stackoverflow.com/questions/32309683/timeout-decorator-is-it-possible-to-disable-or-make-it-work-on-windows
                 lines.add("import os")
@@ -557,6 +602,8 @@ class TestSuiteWriter {
                 }
             }
             lines.add("from $pythonUtilsFilenameNoExtension import *")
+            // HTTP client timeout (seconds)
+            lines.add("$httpTimeoutVarSeconds = ${config.tcpTimeoutMs / 1000.0}")
             val pythonUtils = PyLoader::class.java.getResource("/$pythonUtilsFilename").readText()
             saveToDisk(pythonUtils, Paths.get(config.outputFolder, pythonUtilsFilename))
         }
@@ -604,6 +651,10 @@ class TestSuiteWriter {
     }
 
     private fun getJavaCommand(): String {
+        if (config.useEnvVarsForPathInTests){
+            return ".setJavaCommand($EXTRACT_JDK_PATH_ENV_VAR_METHOD(\"${config.jdkEnvVarName}\"))"
+        }
+
         if (config.javaCommand != "java") {
             val java = config.javaCommand.replace("\\", "\\\\")
             return ".setJavaCommand(\"$java\")"
@@ -620,8 +671,12 @@ class TestSuiteWriter {
 
         val wireMockServers = getActiveWireMockServers()
 
-        val executable = if (controllerInput.isNullOrBlank()) ""
-        else "\"$controllerInput\"".replace("\\", "\\\\")
+        val executable = if (config.useEnvVarsForPathInTests){
+            "$EXTRACT_SUT_PATH_ENV_VAR_METHOD(\"${config.sutDistEnvVarName}\", \"${config.sutJarEnvVarName}\")"
+        }else{
+            if (controllerInput.isNullOrBlank()) ""
+            else "\"$controllerInput\"".replace("\\", "\\\\")
+        }
 
         if (config.outputFormat.isJava()) {
             if (!config.blackBox || config.bbExperiments) {
@@ -736,6 +791,13 @@ class TestSuiteWriter {
 
         val format = config.outputFormat
 
+        // For Playwright, avoid emitting a top-level test.beforeAll hook to prevent
+        // Playwright runner errors when files are imported indirectly. Also, for
+        // black-box scenarios the hook would be empty anyway.
+        if (format.isPlaywright()) {
+            return
+        }
+
         when {
             format.isJUnit4() -> lines.add("@BeforeClass")
             format.isJUnit5() -> lines.add("@BeforeAll")
@@ -746,7 +808,9 @@ class TestSuiteWriter {
                 lines.add("@JvmStatic")
                 lines.add("fun initClass()")
             }
-            format.isJavaScript() -> lines.add("beforeAll( async () =>")
+            format.isJavaScript() -> {
+                lines.add("beforeAll( async () =>")
+            }
         }
 
         lines.block {
@@ -802,11 +866,23 @@ class TestSuiteWriter {
                     addStatement("RestAssured.urlEncodingEnabled = false", lines)
                 }
 
-                if (config.enableBasicAssertions && format.isJavaOrKotlin()) {
+                if (format.isJavaOrKotlin()) {
+                    // global HTTP client config. The socket timeout MUST match the one used during
+                    // fuzzing (tcpTimeoutMs), so that timeout faults are reproduced consistently
                     lines.add("RestAssured.config = RestAssured.config()")
                     lines.indented {
+                        if (config.enableBasicAssertions) {
+                            lines.add(".jsonConfig(JsonConfig.jsonConfig().numberReturnType(JsonPathConfig.NumberReturnType.DOUBLE))")
+                            lines.add(".redirect(redirectConfig().followRedirects(false))")
+                        }
+                        lines.add(".httpClient(HttpClientConfig.httpClientConfig()")
+                        lines.indented {
+                            lines.add(".setParam(\"http.socket.timeout\", ${config.tcpTimeoutMs})")
+                            lines.add(".setParam(\"http.connection.timeout\", ${config.tcpTimeoutMs}))")
+                        }
                         lines.add(".jsonConfig(JsonConfig.jsonConfig().numberReturnType(JsonPathConfig.NumberReturnType.DOUBLE))")
                         lines.add(".redirect(redirectConfig().followRedirects(false))")
+                        lines.add(".encoderConfig(EncoderConfig.encoderConfig().encodeContentTypeAs(\"application/octet-stream\", ContentType.TEXT))")
                     }
                     lines.appendSemicolon()
                 }
@@ -901,7 +977,13 @@ class TestSuiteWriter {
                 lines.add("@JvmStatic")
                 lines.add("fun tearDown()")
             }
-            format.isJavaScript() -> lines.add("afterAll( async () =>")
+            format.isJavaScript() -> {
+                if (format.isPlaywright()) {
+                    lines.add("test.afterAll( async () =>")
+                } else {
+                    lines.add("afterAll( async () =>")
+                }
+            }
         }
 
         if (!format.isCsharp()) {
@@ -954,7 +1036,13 @@ class TestSuiteWriter {
             format.isKotlin() -> {
                 lines.add("fun initTest()")
             }
-            format.isJavaScript() -> lines.add("beforeEach(async () => ")
+            format.isJavaScript() -> {
+                if (format.isPlaywright()) {
+                    lines.add("test.beforeEach(async () => ")
+                } else {
+                    lines.add("beforeEach(async () => ")
+                }
+            }
             //for C# we are actually setting up the constructor for the test class
             format.isCsharp() -> lines.add("public ${name.getClassName()} ($fixtureClass fixture)")
         }

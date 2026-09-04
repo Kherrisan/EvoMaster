@@ -13,12 +13,87 @@ package org.evomaster.test.utils;
  */
 
 import java.net.URI;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 /**
  * Class containing utility functions that can be used in the
  * automatically generated tests
  */
 public class EMTestUtils {
+
+    /**
+     * Loaded only once at class loading.
+     * Seed is still going to incremented with ++ at each use.
+     * The idea is to force each value unique during a session, even when generating hundreds of thousands of tests.
+     * However, when running again in generated test suite, a new starting seed might reduce chances of clashes,
+     * albeit cannot guarantee removal of them
+     */
+    private static long seed = System.currentTimeMillis();
+
+    /**
+     *
+     * @param minLength Optional minimum length of the generated string
+     * @param maxLength Optional maximum length of the generated string
+     * @param prefix    Optional fixed prefix shared by all generated strings
+     * @param postfix   Optional fixed postfix shared by all generated strings
+     * @return
+     */
+    public static String createString(Integer minLength, Integer maxLength, String prefix, String postfix){
+
+        if(minLength != null && minLength < 0){
+            throw new IllegalArgumentException("Negative minimum length: " + minLength);
+        }
+        if(maxLength != null && maxLength < 0){
+            throw new IllegalArgumentException("Negative maximum length: " + maxLength);
+        }
+
+        int min = 0;
+        if(minLength != null){
+            min = minLength;
+        }
+        int len = 0;
+        if(prefix != null){
+            len += prefix.length();
+        }
+        if(postfix != null){
+            len += postfix.length();
+        }
+        min = Math.max(min, len);
+
+        //actual check on inputs
+        if(maxLength != null && maxLength < len){
+            throw new IllegalArgumentException("Maximum length " + maxLength + " does not cover minimum prefix+postfix length: "+prefix+postfix);
+        }
+
+        //recompute with default values if not specified
+        if(prefix == null){
+            prefix = "u";
+        }
+        if(postfix == null){
+            postfix = "";
+        }
+        len = prefix.length() + postfix.length();
+
+        int maxDigits = 6; // 999 999 values
+        if(maxDigits + len < min){
+            maxDigits = min - len;
+        }
+        if(maxLength != null && maxDigits + len > maxLength ){
+            maxDigits = maxLength - len;
+        }
+
+        int mask = 1;
+        for(int i = 0; i < maxDigits; i++){
+            mask = mask * 10;
+        }
+
+        long value = seed % mask;
+        seed++;
+
+        return prefix + value + postfix;
+    }
+
 
     /**
      *
@@ -136,5 +211,68 @@ public class EMTestUtils {
         }catch (Exception e){
             return false;
         }
+    }
+
+    /**
+     * Resolves the absolute path to the Java executable using the given
+     * JDK environment variable name.
+     *
+     * <p>This method expects the environment variable (e.g. {@code JAVA_HOME})
+     * to point to a JDK installation directory. It appends {@code "bin"} and
+     * {@code "java"} to construct the full path to the Java executable.</p>
+     *
+     *
+     * @param jdkEnvVarName the name of the JDK environment variable
+     *                      (e.g. {@code "JAVA_HOME"})
+     * @return the absolute path to the Java executable as a String
+     * @throws RuntimeException if the environment variable is not defined or empty
+     */
+    public static String extractJDKPathWithEnvVarName(String jdkEnvVarName){
+        return extractPathWithEnvVar(jdkEnvVarName, "bin", "java").toString();
+    }
+
+    /**
+     * Resolves the absolute path to a System-Under-Test (SUT) JAR file
+     * using environment variables.
+     *
+     *
+     * @param sutDistEnvVarName the environment variable that contains the base
+     *                          directory of the SUT distribution
+     * @param sutJarEnvVarName the name of the JAR file (or relative path inside the distribution)
+     * @return the absolute path to the SUT JAR file as a String
+     * @throws RuntimeException if the distribution environment variable is not defined or empty
+     */
+    public static String extractSutJarNameWithEnvVarName(String sutDistEnvVarName, String sutJarEnvVarName){
+        return extractPathWithEnvVar(sutDistEnvVarName, sutJarEnvVarName).toString();
+    }
+
+    /**
+     * Resolves an absolute {@link Path} using the value of a given environment variable
+     * as the base directory and appending additional path segments.
+     *
+     * <p>For example, if {@code envVarName} is {@code "JAVA_HOME"} and
+     * {@code others} contains {@code "bin", "java"}, this method will return:</p>
+     *
+     * <pre>
+     * $JAVA_HOME/bin/java   (Linux/macOS)
+     * %JAVA_HOME%\bin\java  (Windows)
+     * </pre>
+     *
+     * <p>The resulting path is converted to an absolute path.</p>
+     *
+     * @param envVarName the name of the environment variable (e.g. {@code "JAVA_HOME"})
+     * @param others additional path segments to append to the environment variable path
+     * @return the resolved absolute {@link Path}
+     * @throws RuntimeException if the environment variable is not defined or empty
+     */
+    private static Path extractPathWithEnvVar(String envVarName, String... others){
+        String javaHome = System.getenv(envVarName);
+
+        if (javaHome == null || javaHome.isEmpty()) {
+            throw new IllegalArgumentException("Environment variable does not seem to be defined: " + envVarName);
+        }
+
+        Path javaExecutable = Paths.get(javaHome, others);
+        return javaExecutable.toAbsolutePath();
     }
 }

@@ -3,18 +3,20 @@ package org.evomaster.core
 import com.google.inject.AbstractModule
 import com.google.inject.Provides
 import com.google.inject.Singleton
-import org.evomaster.core.output.service.NoTestCaseWriter
+import org.evomaster.core.llm.service.DictionaryService
+import org.evomaster.core.llm.service.LlmService
 import org.evomaster.core.output.service.PartialOracles
-import org.evomaster.core.output.service.TestCaseWriter
-import org.evomaster.core.output.service.TestSuiteWriter
 import org.evomaster.core.search.service.mutator.genemutation.ArchiveImpactSelector
 import org.evomaster.core.search.service.*
 import org.evomaster.core.search.service.monitor.SearchProcessMonitor
 import org.evomaster.core.search.service.mutator.MutationWeightControl
 import org.evomaster.core.search.service.mutator.genemutation.ArchiveGeneMutator
+import org.evomaster.core.search.service.time.ExecutionPhaseController
+import org.evomaster.core.search.service.time.SearchStatusUpdater
+import org.evomaster.core.search.service.time.SearchTimeController
 import org.evomaster.core.search.tracer.ArchiveMutationTrackService
 import org.evomaster.core.search.tracer.TrackService
-import org.evomaster.core.solver.SMTLibZ3DbConstraintSolver
+import org.evomaster.core.database.sql.solver.service.SMTLibZ3DbConstraintSolver
 
 
 /**
@@ -90,6 +92,15 @@ class BaseModule(val args: Array<String>, val noTests: Boolean = false) : Abstra
             .asEagerSingleton()
 
         bind(ExecutionStats::class.java)
+            .asEagerSingleton()
+
+        bind(WarningsAggregator::class.java)
+            .asEagerSingleton()
+
+        bind(LlmService::class.java)
+            .asEagerSingleton()
+
+        bind(DictionaryService::class.java)
             .asEagerSingleton()
 
         //no longer needed if TestSuiteWriter is moved out?

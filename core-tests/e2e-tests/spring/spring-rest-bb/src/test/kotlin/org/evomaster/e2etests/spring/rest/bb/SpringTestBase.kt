@@ -13,6 +13,7 @@ import org.evomaster.e2etests.utils.RestTestBase
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.assertTimeoutPreemptively
 import java.nio.file.Paths
@@ -26,7 +27,10 @@ abstract class SpringTestBase : RestTestBase() {
 
     companion object {
         /*
-            dirty hack to avoid applying instrumentation
+            dirty hack to avoid applying instrumentation.
+            Note: this MUST be done in each subclass, as this is executed only once.
+            Using @BeforeAll would not work, as the once from EnterpriseTestBase would be
+            executed first before any change we would make here
          */
         init {
             EnterpriseTestBase.shouldApplyInstrumentation = false
@@ -35,6 +39,9 @@ abstract class SpringTestBase : RestTestBase() {
         @JvmStatic
         @AfterAll
         fun resetInstrumentation(){
+            /*
+                we don't want to impact tests in other modules
+             */
             EnterpriseTestBase.shouldApplyInstrumentation = true
         }
     }
@@ -77,6 +84,22 @@ abstract class SpringTestBase : RestTestBase() {
         setOption(args, "bbExperiments", "false")
     }
 
+
+    fun executeAndEvaluateBBTest(
+        outputFormat: OutputFormat,
+        outputFolderName: String,
+        iterations: Int,
+        timeoutMinutes: Int,
+        handleFlakyWithTests : Boolean,
+        targetLabel: String,
+        lambda: Consumer<MutableList<String>>
+    ){
+        executeAndEvaluateBBTest(outputFormat, outputFolderName, iterations, timeoutMinutes,
+            handleFlakyWithTests,
+            listOf(targetLabel),
+            lambda)
+    }
+
     fun executeAndEvaluateBBTest(
         outputFormat: OutputFormat,
         outputFolderName: String,
@@ -86,6 +109,7 @@ abstract class SpringTestBase : RestTestBase() {
         lambda: Consumer<MutableList<String>>
     ){
         executeAndEvaluateBBTest(outputFormat, outputFolderName, iterations, timeoutMinutes,
+            false,
             listOf(targetLabel),
             lambda)
     }
@@ -98,23 +122,40 @@ abstract class SpringTestBase : RestTestBase() {
         targetLabels: Collection<String>,
         lambda: Consumer<MutableList<String>>
     ){
+        executeAndEvaluateBBTest(outputFormat, outputFolderName, iterations, timeoutMinutes,
+            false,
+            targetLabels,
+            lambda)
+    }
+
+    fun executeAndEvaluateBBTest(
+        outputFormat: OutputFormat,
+        outputFolderName: String,
+        iterations: Int,
+        timeoutMinutes: Int,
+        handleFlakyWithTests : Boolean,
+        targetLabels: Collection<String>,
+        lambda: Consumer<MutableList<String>>
+    ){
         assumeTrue(outputFormat != OutputFormat.DEFAULT)
 
         assertFalse(CoveredTargets.areCovered(targetLabels))
-        runBlackBoxEM(outputFormat, outputFolderName, iterations, timeoutMinutes, lambda)
+        runBlackBoxEM(outputFormat, outputFolderName, iterations, timeoutMinutes, handleFlakyWithTests, lambda)
         BlackBoxUtils.checkCoveredTargets(targetLabels)
 
-        CoveredTargets.reset()
-        runGeneratedTests(outputFormat, outputFolderName)
-        BlackBoxUtils.checkCoveredTargets(targetLabels)
+        if (!handleFlakyWithTests){
+            CoveredTargets.reset()
+            runGeneratedTests(outputFormat, outputFolderName)
+            BlackBoxUtils.checkCoveredTargets(targetLabels)
+        }
     }
-
 
     fun runBlackBoxEM(
         outputFormat: OutputFormat,
         outputFolderName: String,
         iterations: Int,
         timeoutMinutes: Int,
+        handleFlakyWithTests : Boolean,
         lambda: Consumer<MutableList<String>>
     ){
         val baseLocation = when {
@@ -124,13 +165,13 @@ abstract class SpringTestBase : RestTestBase() {
             outputFormat.isKotlin() -> BlackBoxUtils.baseLocationForKotlin
             else -> throw IllegalArgumentException("Not supported output type $outputFormat")
         }
-        runTestForNonJVM(outputFormat, baseLocation, outputFolderName, iterations, timeoutMinutes, lambda)
+        runTestForNonJVM(outputFormat, baseLocation, outputFolderName, iterations, timeoutMinutes, handleFlakyWithTests, lambda)
     }
 
     fun runGeneratedTests(outputFormat: OutputFormat, outputFolderName: String){
 
         when{
-            outputFormat.isJavaScript() -> BlackBoxUtils.runNpmTests(BlackBoxUtils.relativePath(outputFolderName))
+            outputFormat.isJavaScript() -> BlackBoxUtils.runNpmTests(BlackBoxUtils.relativePath(outputFolderName), outputFormat.isPlaywright())
             outputFormat.isPython() -> BlackBoxUtils.runPythonTests(BlackBoxUtils.relativePath(outputFolderName))
             outputFormat.isJava() -> BlackBoxUtils.runJavaTests(outputFolderName)
             outputFormat.isKotlin() -> BlackBoxUtils.runKotlinTests(outputFolderName)
@@ -145,6 +186,7 @@ abstract class SpringTestBase : RestTestBase() {
         outputFolderName: String,
         iterations: Int,
         timeoutMinutes: Int,
+        handleFlakyWithTests : Boolean,
         lambda: Consumer<MutableList<String>>
     ) {
         val folder = if(outputFormat.isJavaOrKotlin()){
@@ -175,9 +217,17 @@ abstract class SpringTestBase : RestTestBase() {
                 if(outputFormat.isKotlin()){
                     setOption(args,"outputFilePrefix",BlackBoxUtils.getOutputFilePrefixKotlin(outputFolderName))
                 }
+                if (outputFormat.isPlaywright()) {
+                    setOption(args, "outputFilePrefix", "EvoMaster_pw")
+                }
 
                 defaultSeed++
                 lambda.accept(ArrayList(args))
+
+                if (handleFlakyWithTests){
+                    CoveredTargets.reset()
+                    runGeneratedTests(outputFormat, outputFolderName)
+                }
             }
         }
     }

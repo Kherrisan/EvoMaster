@@ -60,6 +60,13 @@ public class RedisCommand implements Serializable {
          * This operation is limited to 64-bit signed integers.
          * <a href="https://redis.io/docs/latest/commands/incr/">INCR Documentation</a>
          */
+        HSET("hset", "hash", false),
+        /**
+         * Sets the specified fields to their respective values in the hash stored at key.
+         * This command overwrites the values of specified fields that exist in the hash.
+         * If key doesn't exist, a new key holding a hash is created.
+         * <a href="https://redis.io/docs/latest/commands/hset/">HSET Documentation</a>
+         */
         INCR("incr", "string", false),
         /**
          * Returns all keys matching pattern.
@@ -86,6 +93,12 @@ public class RedisCommand implements Serializable {
          * <a href="https://redis.io/docs/latest/commands/sadd/">SADD Documentation</a>
          */
         SADD("sadd", "set", false),
+        /**
+         * Select the Redis logical database having the specified zero-based numeric index.
+         * New connections always use the database 0.
+         * <a href="https://redis.io/docs/latest/commands/select/">SELECT Documentation</a>
+         */
+        SELECT("select", "none", false),
         /**
          * Set key to hold the string value and set key to timeout after a given number of seconds.
          * <a href="https://redis.io/docs/latest/commands/setex/">SETEX Documentation</a>
@@ -215,5 +228,9 @@ public class RedisCommand implements Serializable {
 
     public long getExecutionTime() {
         return executionTime;
+    }
+
+    public String toString(){
+        return this.getType().getLabel() + " " + String.join(" ", this.getArgs());
     }
 }

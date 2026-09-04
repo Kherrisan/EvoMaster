@@ -8,26 +8,27 @@ import com.netflix.governator.guice.LifecycleInjector
 import org.evomaster.core.BaseModule
 import org.evomaster.core.EMConfig
 import org.evomaster.core.TestUtils
+import org.evomaster.core.search.SearchTestBase
 import org.evomaster.core.search.algorithms.onemax.OneMaxIndividual
 import org.evomaster.core.search.algorithms.onemax.OneMaxModule
 import org.evomaster.core.search.algorithms.onemax.OneMaxSampler
 import org.evomaster.core.search.service.Randomness
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.BeforeEach
-import org.evomaster.core.search.service.ExecutionPhaseController
+import org.evomaster.core.search.service.time.ExecutionPhaseController
 
 import org.junit.jupiter.api.Assertions.*
 import org.evomaster.core.search.algorithms.strategy.FixedSelectionStrategy
 import org.evomaster.core.search.algorithms.observer.GARecorder
 
-class StandardGeneticAlgorithmTest {
+class StandardGeneticAlgorithmTest : SearchTestBase(){
 
     private lateinit var injector: Injector
 
     @BeforeEach
     fun setUp() {
         injector = LifecycleInjector.builder()
-            .withModules(* arrayOf<Module>(OneMaxModule(), BaseModule()))
+            .withModules(* arrayOf<Module>(OneMaxModule(), BaseModule(arrayOf("--blackBox","false"))))
             .build().createInjector()
     }
 
@@ -45,9 +46,9 @@ class StandardGeneticAlgorithmTest {
             config.stoppingCriterion = EMConfig.StoppingCriterion.ACTION_EVALUATIONS
 
             val epc = injector.getInstance(ExecutionPhaseController::class.java)
-            epc.startSearch()
+            epc.markStartingSearch()
             val solution = standardGeneticAlgorithm.search()
-            epc.finishSearch()
+            epc.markFinishedSession()
             assertTrue(solution.individuals.size == 1)
             assertEquals(OneMaxSampler.DEFAULT_N.toDouble(), solution.overall.computeFitnessScore(), 0.001)
         }
@@ -118,7 +119,7 @@ class StandardGeneticAlgorithmTest {
             assertEquals(2, rec.mutated.size)
             assertTrue(rec.mutated.any { it === o1 })
             assertTrue(rec.mutated.any { it === o2 })
-    
+
         }
     }
 
@@ -165,7 +166,7 @@ class StandardGeneticAlgorithmTest {
                 assertEquals(0, rec.xoCalls.size)
                 // mutation still applied twice
                 assertEquals(2, rec.mutated.size)
-            
+
         }
     }
 
@@ -210,7 +211,7 @@ class StandardGeneticAlgorithmTest {
                 // crossover forced
                 assertEquals(1, rec.xoCalls.size)
                 // mutation disabled
-                assertEquals(0, rec.mutated.size)  
+                assertEquals(0, rec.mutated.size)
         }
     }
 }
@@ -221,7 +222,7 @@ private fun createGAWithSelection(
     fixedSel: FixedSelectionStrategy
 ): Pair<StandardGeneticAlgorithm<OneMaxIndividual>, Injector> {
     val injector = LifecycleInjector.builder()
-        .withModules(* arrayOf<Module>(OneMaxModule(), BaseModule()))
+        .withModules(* arrayOf<Module>(OneMaxModule(), BaseModule(arrayOf("--blackBox","false"))))
         .build().createInjector()
 
     val ga = injector.getInstance(

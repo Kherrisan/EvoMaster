@@ -2,7 +2,6 @@ package org.evomaster.core.problem.rest.classifier.probabilistic.nn
 
 import org.evomaster.core.EMConfig
 import org.evomaster.core.problem.rest.classifier.AIResponseClassification
-import org.evomaster.core.problem.rest.classifier.probabilistic.InputEncoderUtilWrapper
 import org.evomaster.core.problem.rest.classifier.probabilistic.AbstractProbabilistic400EndpointModel
 import org.evomaster.core.problem.rest.data.Endpoint
 import org.evomaster.core.problem.rest.data.RestCallAction
@@ -19,23 +18,16 @@ import kotlin.math.exp
  */
 class NN400EndpointModel(
     endpoint: Endpoint,
-    warmup: Int = 10,
+    warmup: Int,
+    modelKeys: List<String>? = null,
     dimension: Int? = null,
-    encoderType: EMConfig.EncoderType = EMConfig.EncoderType.NORMAL,
-    metricType: EMConfig.AIClassificationMetrics = EMConfig.AIClassificationMetrics.TIME_WINDOW,
+    encoderType: EMConfig.EncoderType,
+    metricType: EMConfig.AIClassificationMetrics,
     private val learningRate: Double = 0.01,
     randomness: Randomness
 ) : AbstractProbabilistic400EndpointModel(
-    endpoint, warmup, dimension, encoderType, metricType, randomness) {
+    endpoint, warmup, modelKeys, dimension, encoderType, metricType, randomness) {
 
-    init {
-        // Throw an exception if a non-NORMAL encoder is provided
-        if (encoderType != EMConfig.EncoderType.NORMAL) {
-            throw IllegalArgumentException(
-                "NN400EndpointModel supports only NORMAL encoder, but got: $encoderType"
-            )
-        }
-    }
 
     // Initialize weights with default values to prevent null
     private val hiddenSize: Int = 16 // size of the hidden layer
@@ -45,24 +37,19 @@ class NN400EndpointModel(
 
 
     /** Must be called once to initialize the model properties */
-    override fun initializeIfNeeded(inputVector: List<Double>) {
-        if (!initialized || dimension == null) {
-            require(inputVector.isNotEmpty()) { "Input vector cannot be empty" }
-            require(warmup > 0) { "Warmup must be positive" }
-            dimension = inputVector.size
+    override fun initializeIfNeeded(input: RestCallAction) {
 
-            // Initialize with proper dimensions
-            weightsInputHidden = Array(dimension!!) {
-                DoubleArray(hiddenSize) { randomness.nextDouble(-0.1, 0.1) }
-            }
-            weightsHiddenOutput = Array(hiddenSize) {
-                DoubleArray(outputSize) { randomness.nextDouble(-0.1, 0.1) }
-            }
-            initialized = true
-        } else {
-            require(inputVector.size == dimension) {
-                "Expected input vector of size $dimension but got ${inputVector.size}"
-            }
+        if (initialized) {
+            return
+        }
+
+        super.initializeIfNeeded(input)
+        // Initialize with proper dimensions
+        weightsInputHidden = Array(dimension!!) {
+            DoubleArray(hiddenSize) { randomness.nextDouble(-0.1, 0.1) }
+        }
+        weightsHiddenOutput = Array(hiddenSize) {
+            DoubleArray(outputSize) { randomness.nextDouble(-0.1, 0.1) }
         }
     }
 
@@ -77,19 +64,9 @@ class NN400EndpointModel(
             return AIResponseClassification()
         }
 
-        val encoder = InputEncoderUtilWrapper(input, encoderType = encoderType)
-        val inputVector = encoder.encode()
+        initializeIfNeeded(input)
 
-        if (encoder.areAllGenesUnSupported()) {
-            // skip classification/training if unsupported
-            return AIResponseClassification(
-                probabilities = mapOf(
-                    NOT_400 to 0.5,
-                    400 to 0.5)
-            )
-        }
-
-        initializeIfNeeded(inputVector)
+        val inputVector = encodeUsingModelKeys(input)
 
         if (modelMetrics.totalSentRequests < warmup) {
             // Return equal probabilities during warmup
@@ -121,18 +98,9 @@ class NN400EndpointModel(
             return
         }
 
-        val encoder = InputEncoderUtilWrapper(input, encoderType = encoderType)
-        val inputVector = encoder.encode()
+        initializeIfNeeded(input)
 
-        if (encoder.areAllGenesUnSupported() || inputVector.isEmpty()) {
-            // Skip training if unsupported or empty
-            val predictedStatusCode = if(randomness.nextBoolean()) 400 else NOT_400
-            modelMetrics.updatePerformance(predictedStatusCode,output.getStatusCode()?:-1)
-            modelMetrics.updatePerformance(predictedStatusCode, output.getStatusCode()?:-1)
-            return
-        }
-
-        initializeIfNeeded(inputVector)
+        val inputVector = encodeUsingModelKeys(input)
 
         if (inputVector.size != this.dimension) {
             throw IllegalArgumentException("Expected input vector of size ${this.dimension} but got ${inputVector.size}")

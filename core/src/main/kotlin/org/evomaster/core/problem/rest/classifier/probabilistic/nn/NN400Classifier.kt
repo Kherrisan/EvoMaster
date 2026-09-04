@@ -7,9 +7,9 @@ import org.evomaster.core.problem.rest.classifier.probabilistic.AbstractProbabil
 
 
 class NN400Classifier(
-    warmup: Int = 10,
-    encoderType: EMConfig.EncoderType = EMConfig.EncoderType.NORMAL,
-    metricType: EMConfig.AIClassificationMetrics = EMConfig.AIClassificationMetrics.TIME_WINDOW,
+    warmup: Int,
+    encoderType: EMConfig.EncoderType,
+    metricType: EMConfig.AIClassificationMetrics,
     private val learningRate: Double = 0.01,
     randomness: Randomness
 ) : AbstractProbabilistic400Classifier<NN400EndpointModel>(
@@ -18,6 +18,7 @@ class NN400Classifier(
     override fun createEndpointModel(
         endpoint: Endpoint,
         warmup: Int,
+        modelKeys: List<String>,
         dimension: Int,
         encoderType: EMConfig.EncoderType,
         metricType: EMConfig.AIClassificationMetrics,
@@ -26,6 +27,7 @@ class NN400Classifier(
         return NN400EndpointModel(
             endpoint,
             warmup,
+            modelKeys,
             dimension,
             encoderType,
             metricType,

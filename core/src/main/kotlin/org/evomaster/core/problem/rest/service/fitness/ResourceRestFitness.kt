@@ -2,8 +2,8 @@ package org.evomaster.core.problem.rest.service.fitness
 
 
 import com.google.inject.Inject
-import org.evomaster.core.sql.SqlAction
-import org.evomaster.core.mongo.MongoDbAction
+import org.evomaster.core.database.sql.SqlAction
+import org.evomaster.core.database.mongo.MongoDbAction
 import org.evomaster.core.problem.enterprise.EnterpriseActionGroup
 import org.evomaster.core.problem.externalservice.ApiExternalServiceAction
 import org.evomaster.core.problem.externalservice.httpws.HttpExternalServiceAction
@@ -15,6 +15,7 @@ import org.evomaster.core.problem.rest.data.RestIndividual
 import org.evomaster.core.problem.rest.resource.RestResourceCalls
 import org.evomaster.core.problem.rest.service.ResourceDepManageService
 import org.evomaster.core.problem.rest.service.ResourceManageService
+import org.evomaster.core.database.redis.RedisDbAction
 import org.evomaster.core.search.action.ActionFilter
 import org.evomaster.core.search.action.ActionResult
 import org.evomaster.core.search.EvaluatedIndividual
@@ -59,8 +60,9 @@ class ResourceRestFitness : AbstractRestFitness() {
             which prevents the retrieval of token or cookie values.
         */
 
-        val cookies = AuthUtils.getCookies(client, getBaseUrl(), individual)
-        val tokens = AuthUtils.getTokens(client, getBaseUrl(), individual)
+        val placeholders = AuthUtils.createUsers(client, getBaseUrl(), individual)
+        val cookies = AuthUtils.getCookies(client, getBaseUrl(), individual, placeholders)
+        val tokens = AuthUtils.getTokens(client, getBaseUrl(), individual, placeholders)
 
         /*
             there might some dbaction between rest actions.
@@ -81,6 +83,8 @@ class ResourceRestFitness : AbstractRestFitness() {
         )
 
         doMongoDbCalls(individual.seeInitializingActions().filterIsInstance<MongoDbAction>(), actionResults)
+
+        doRedisDbCalls(individual.seeInitializingActions().filterIsInstance<RedisDbAction>(), actionResults)
 
         //used for things like chaining "location" paths
         val chainState = mutableMapOf<String, String>()

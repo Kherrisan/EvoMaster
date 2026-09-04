@@ -3,9 +3,9 @@ package org.evomaster.core.problem.rest.data
 import org.evomaster.core.search.action.Action
 import org.evomaster.core.search.action.ActionComponent
 import org.evomaster.core.search.action.ActionFilter
-import org.evomaster.core.sql.SqlAction
-import org.evomaster.core.sql.SqlActionUtils
-import org.evomaster.core.mongo.MongoDbAction
+import org.evomaster.core.database.sql.SqlAction
+import org.evomaster.core.database.sql.SqlActionUtils
+import org.evomaster.core.database.mongo.MongoDbAction
 import org.evomaster.core.problem.api.ApiWsIndividual
 import org.evomaster.core.problem.enterprise.EnterpriseActionGroup
 import org.evomaster.core.problem.enterprise.EnterpriseChildTypeVerifier
@@ -13,14 +13,14 @@ import org.evomaster.core.problem.enterprise.SampleType
 import org.evomaster.core.problem.externalservice.HostnameResolutionAction
 import org.evomaster.core.problem.rest.resource.RestResourceCalls
 import org.evomaster.core.problem.rest.resource.SamplerSpecification
+import org.evomaster.core.database.redis.RedisDbAction
 import org.evomaster.core.search.*
 import org.evomaster.core.search.action.ActionFilter.*
 import org.evomaster.core.search.action.EnvironmentAction
-import org.evomaster.core.search.gene.*
 import org.evomaster.core.search.tracer.Traceable
 import org.evomaster.core.search.tracer.TraceableElementCopyFilter
 import org.evomaster.core.search.tracer.TrackOperator
-import org.evomaster.core.sql.schema.TableId
+import org.evomaster.core.database.sql.schema.TableId
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import kotlin.math.max
@@ -39,10 +39,12 @@ class RestIndividual(
     mainSize : Int = allActions.size,
     sqlSize: Int = 0,
     mongoSize: Int = 0,
+    redisSize: Int = 0,
     dnsSize: Int = 0,
     scheduleSize : Int = 0,
     cleanupSize: Int = 0,
-    groups : GroupsOfChildren<StructuralElement> = getEnterpriseTopGroups(allActions,mainSize,sqlSize,mongoSize,dnsSize, scheduleSize, cleanupSize),
+    groups : GroupsOfChildren<StructuralElement> =
+        getEnterpriseTopGroups(allActions, mainSize, sqlSize, mongoSize, redisSize, dnsSize, scheduleSize, cleanupSize),
 ): ApiWsIndividual(
     sampleType,
     trackOperator,
@@ -106,6 +108,7 @@ class RestIndividual(
                 mainSize = groupsView()!!.sizeOfGroup(GroupsOfChildren.MAIN),
                 sqlSize = groupsView()!!.sizeOfGroup(GroupsOfChildren.INITIALIZATION_SQL),
                 mongoSize = groupsView()!!.sizeOfGroup(GroupsOfChildren.INITIALIZATION_MONGO),
+                redisSize = groupsView()!!.sizeOfGroup(GroupsOfChildren.INITIALIZATION_REDIS),
                 dnsSize = groupsView()!!.sizeOfGroup(GroupsOfChildren.INITIALIZATION_DNS),
                 cleanupSize = groupsView()!!.sizeOfGroup(GroupsOfChildren.CLEANUP),
         )
@@ -133,9 +136,12 @@ class RestIndividual(
         removeAllBindingAmongGenes()
 
         val dnsActions = resources.flatMap { it.seeActions(ONLY_DNS)} as List<HostnameResolutionAction>
+
         val sqlActions = (resources.flatMap { it.seeActions(ONLY_SQL) } as List<SqlAction>)
 
         val mongoDbActions = resources.flatMap { it.seeActions(ONLY_MONGO) } as List<MongoDbAction>
+
+        val redisDbActions = resources.flatMap { it.seeActions(ONLY_REDIS) } as List<RedisDbAction>
 
         val groups = resources.flatMap { it.seeEnterpriseActionGroup() }
 
@@ -144,6 +150,7 @@ class RestIndividual(
 
         addChildrenToGroup(sqlActions, GroupsOfChildren.INITIALIZATION_SQL)
         addChildrenToGroup(mongoDbActions, GroupsOfChildren.INITIALIZATION_MONGO)
+        addChildrenToGroup(redisDbActions, GroupsOfChildren.INITIALIZATION_REDIS)
         addChildrenToGroup(dnsActions, GroupsOfChildren.INITIALIZATION_DNS)
 
 
@@ -162,7 +169,7 @@ class RestIndividual(
         /*
             if we move any environment action to the beginning of the individual, it might impact the fitness
          */
-        return dnsActions.isNotEmpty() || sqlActions.isNotEmpty() || mongoDbActions.isNotEmpty()
+        return dnsActions.isNotEmpty() || sqlActions.isNotEmpty() || mongoDbActions.isNotEmpty() || redisDbActions.isNotEmpty()
 
         // re-generate local id
 //        resetLocalIdRecursively()
@@ -228,8 +235,12 @@ class RestIndividual(
     }
 
     //FIXME refactor
-    override fun verifyInitializationActions(): Boolean {
-        return SqlActionUtils.verifyActions(seeInitializingActionsPlusRelatedActions().filterIsInstance<SqlAction>())
+    override fun isValidInitializationActions(errors: MutableList<String>?): Boolean {
+        return SqlActionUtils.isValidActions(
+            seeInitializingActionsPlusRelatedActions().filterIsInstance<SqlAction>(),
+            isFlattenedStructure(),
+            errors
+        )
     }
 
     /**

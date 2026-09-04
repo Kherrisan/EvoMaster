@@ -14,7 +14,7 @@ import java.util.List;
 
 /**
  * Code running in the Java Agent to receive and respond to the
- * requests from the the SUT controller.
+ * requests from the SUT controller.
  */
 public class AgentController {
 
@@ -92,6 +92,14 @@ public class AgentController {
                         break;
                     case EXECUTING_INIT_MONGO:
                         handleExecutingInitMongo();
+                        sendCommand(Command.ACK);
+                        break;
+                    case EXECUTING_INIT_CASSANDRA:
+                        handleExecutingInitCassandra();
+                        sendCommand(Command.ACK);
+                        break;
+                    case EXECUTING_INIT_REDIS:
+                        handleExecutingInitRedis();
                         sendCommand(Command.ACK);
                         break;
                     case EXECUTING_ACTION:
@@ -177,6 +185,26 @@ public class AgentController {
             InstrumentationController.setExecutingInitMongo(executingInitMongo);
         } catch (Exception e){
             SimpleLogger.error("Failure in handling executing-init-mongo: "+e.getMessage());
+        }
+    }
+
+    private static void handleExecutingInitCassandra() {
+        try {
+            Object msg = in.readObject();
+            Boolean executingInitCassandra = (Boolean) msg;
+            InstrumentationController.setExecutingInitCassandra(executingInitCassandra);
+        } catch (Exception e){
+            SimpleLogger.error("Failure in handling executing-init-cassandra: "+e.getMessage());
+        }
+    }
+
+    private static void handleExecutingInitRedis() {
+        try {
+            Object msg = in.readObject();
+            Boolean executingInitRedis = (Boolean) msg;
+            InstrumentationController.setExecutingInitRedis(executingInitRedis);
+        } catch (Exception e){
+            SimpleLogger.error("Failure in handling executing-init-redis: "+e.getMessage());
         }
     }
 

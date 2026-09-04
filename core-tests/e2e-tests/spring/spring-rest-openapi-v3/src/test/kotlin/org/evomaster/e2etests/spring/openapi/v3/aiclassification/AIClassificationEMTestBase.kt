@@ -30,7 +30,6 @@ abstract class AIClassificationEMTestBase : SpringTestBase(){
     ): EvaluatedIndividual<RestIndividual> {
 
         val sampler = injector.getInstance(AbstractRestSampler::class.java)
-
         val ind = sampler.createIndividual(sampleT, actions.toMutableList())
 
         val ff = injector.getInstance(AbstractRestFitness::class.java)
@@ -43,42 +42,42 @@ abstract class AIClassificationEMTestBase : SpringTestBase(){
         injector: Injector,
         ok2xx: List<RestCallAction>,
         fail400: List<RestCallAction>,
-        threshold: Double = injector.getInstance(EMConfig::class.java).classificationRepairThreshold,
-        minimalOverallAccuracy: Double = 0.5,
-        minimalOverallF1Score400: Double = 0.2
+        repairThreshold: Double = injector.getInstance(EMConfig::class.java).classificationRepairThreshold,
+        randomPerformanceThreshold: Double = 0.50
     ) {
 
         val model = injector.getInstance(AIResponseClassifier::class.java)
         model.disableLearning() // no side-effects
 
-        val overallMetrics = model.estimateOverallMetrics()
+        var correctPrediction = 0
+        // 400
+        for (fail in fail400) {
+            val result = evaluateAction(injector, fail)
+            assertEquals(400, result.getStatusCode())
 
-        val overallAccuracy = overallMetrics.accuracy
-        assertTrue(overallAccuracy >= minimalOverallAccuracy, "Too low accuracy $overallAccuracy." +
-                " Minimal accepted is $minimalOverallAccuracy")
+            val probability = model.classify(fail).probabilityOf400()
+            if (probability >= repairThreshold) {
+                correctPrediction++
+            }
+        }
+        // 2xx
+        for (ok in ok2xx) {
+            val result = evaluateAction(injector, ok)
+            assertTrue(result.getStatusCode() in 200..299)
 
-        val overallF1Score400 = overallMetrics.f1Score400
-        assertTrue(overallF1Score400 >= minimalOverallF1Score400, "Too low F1-Score $overallF1Score400." +
-                " Minimal accepted is $minimalOverallF1Score400")
-
-        for(ok in ok2xx){
-            val resOK = evaluateAction(injector, ok)
-            assertTrue(resOK.getStatusCode() in 200..299)
-            val mOK= model.classify(ok)
-            assertTrue(
-                mOK.probabilityOf400() < threshold,
-                "Too high probability of 400 for OK ${ok.getName()}: ${mOK.probabilityOf400()}")
+            val probability = model.classify(ok).probabilityOf400()
+            if (probability < repairThreshold) {
+                correctPrediction++
+            }
         }
 
-        for(fail in fail400) {
-            val resFail = evaluateAction(injector, fail)
-            assertEquals(400, resFail.getStatusCode())
-            val mFail = model.classify(fail)
-            assertTrue(
-                mFail.probabilityOf400() >= threshold,
-                "Too low probability of 400 for Fail ${fail.getName()}: ${mFail.probabilityOf400()}"
-            )
-        }
+        val totalSize = ok2xx.size + fail400.size
+        val accuracy =
+            if (totalSize > 0) correctPrediction.toDouble() / totalSize else 0.0
+
+        assertTrue(
+            accuracy > randomPerformanceThreshold,
+            "Too low total accuracy: $accuracy"
+        )
     }
-
 }

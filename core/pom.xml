@@ -5,17 +5,34 @@
     <parent>
         <groupId>org.evomaster</groupId>
         <artifactId>evomaster-core-parent</artifactId>
-        <version>4.0.1-SNAPSHOT</version>
+        <version>6.1.2-SNAPSHOT</version>
         <relativePath>../core-parent</relativePath>
     </parent>
 
     <artifactId>evomaster-core</artifactId>
     <packaging>jar</packaging>
 
+    <properties>
+        <skipTests>${skipCore}</skipTests>
+        <!--
+            core has the heaviest gene test suite (GeneRandomizedTest: 1001 seeds × ~100 gene types).
+            On CI runners where algorithm tests complete faster than usual, less GC activity
+            accumulates before gene tests run, leaving the heap more fragmented and full.
+            5120m (vs the global 4096m) provides the headroom to survive runner variability.
+            GitHub Actions ubuntu-latest has 7 GB RAM: 5 GB heap + 1 GB Maven + 1 GB OS = 7 GB.
+            Overrides the root-pom testHeapXmx to avoid duplicating the surefire/failsafe argLine.
+        -->
+        <testHeapXmx>5120m</testHeapXmx>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>org.evomaster</groupId>
             <artifactId>evomaster-test-utils-java</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.evomaster</groupId>
+            <artifactId>evomaster-client-java-postgres-test-utils</artifactId>
         </dependency>
         <dependency>
             <groupId>org.evomaster</groupId>
@@ -34,27 +51,18 @@
             <artifactId>evomaster-client-java-instrumentation-shared</artifactId>
         </dependency>
         <dependency>
-            <!--
-                This is only needed for testing, when accessing some SQL
-                code. But might be removed in future if all SQL code is
-                moved into Core
-            -->
             <groupId>org.evomaster</groupId>
-            <artifactId>evomaster-client-java-controller</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.evomaster</groupId>
-            <artifactId>evomaster-ci-utils</artifactId>
-            <scope>test</scope>
-            <version>${project.version}</version>
-            <type>test-jar</type>
+            <artifactId>extra-shared</artifactId>
         </dependency>
 
 
         <dependency>
             <groupId>com.webfuzzing</groupId>
             <artifactId>commons</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.webfuzzing</groupId>
+            <artifactId>overlay-jvm</artifactId>
         </dependency>
 
 
@@ -183,7 +191,7 @@
             <artifactId>javax.el</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.hibernate</groupId>
+            <groupId>org.hibernate.validator</groupId>
             <artifactId>hibernate-validator</artifactId>
         </dependency>
         <dependency>
@@ -218,6 +226,34 @@
             <groupId>org.antlr</groupId>
             <artifactId>antlr4-runtime</artifactId>
         </dependency>
+
+
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-open-ai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-ollama</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-azure-open-ai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-google-ai-gemini</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-anthropic</artifactId>
+        </dependency>
+
+
 
         <dependency>
             <groupId>org.apache.commons</groupId>
@@ -298,6 +334,35 @@
             <artifactId>solver</artifactId>
             <scope>compile</scope>
         </dependency>
+
+
+        <!-- Trying to move deps at botton to avoid mess with Jersey shaded from client-->
+        <dependency>
+            <!--
+                This is only needed for testing, when accessing some SQL
+                code. But might be removed in future if all SQL code is
+                moved into Core
+            -->
+            <groupId>org.evomaster</groupId>
+            <artifactId>evomaster-client-java-controller</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.evomaster</groupId>
+            <artifactId>evomaster-ci-utils</artifactId>
+            <scope>test</scope>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+        </dependency>
+        <!-- Should had been imported transitively from client... but it was not? -->
+        <dependency>
+            <groupId>javax.servlet</groupId>
+            <artifactId>javax.servlet-api</artifactId>
+            <version>3.1.0</version>
+            <scope>test</scope>
+        </dependency>
+
+
     </dependencies>
 
 
@@ -374,7 +439,6 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>3.5.0</version>
                 <executions>
                     <execution>
                         <id>shade</id>
@@ -394,11 +458,14 @@
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>org.evomaster.core.Main</mainClass>
                                     <manifestEntries>
-                                        <!-- Keep this in sync with JdkIssue -->
-                                        <Add-Opens>
-                                            java.base/java.net
-                                            java.base/java.util
-                                        </Add-Opens>
+                                        <Implementation-Title>${project.name}</Implementation-Title>
+                                        <Implementation-Version>${project.version}</Implementation-Version>
+                                        <Implementation-Vendor>${project.organization.name}</Implementation-Vendor>
+                                        <Specification-Title>${project.name}</Specification-Title>
+                                        <Specification-Version>${project.version}</Specification-Version>
+                                        <Specification-Vendor>${project.organization.name}</Specification-Vendor>
+                                        <!-- Keep this in sync with JdkIssue and makeExecutable.sh -->
+                                        <Add-Opens>java.base/java.net java.base/java.util</Add-Opens>
                                     </manifestEntries>
                                 </transformer>
                             </transformers>

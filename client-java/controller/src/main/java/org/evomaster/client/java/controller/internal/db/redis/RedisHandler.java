@@ -1,15 +1,16 @@
 package org.evomaster.client.java.controller.internal.db.redis;
 
+import org.evomaster.client.java.controller.api.dto.database.execution.RedisExecutionsDto;
+import org.evomaster.client.java.controller.api.dto.database.execution.RedisFailedCommand;
 import org.evomaster.client.java.controller.internal.TaintHandlerExecutionTracer;
-import org.evomaster.client.java.controller.redis.RedisClient;
-import org.evomaster.client.java.controller.redis.RedisHeuristicsCalculator;
-import org.evomaster.client.java.controller.redis.RedisInfo;
+import org.evomaster.client.java.controller.redis.*;
 import org.evomaster.client.java.instrumentation.RedisCommand;
 import org.evomaster.client.java.utils.SimpleLogger;
 
 import java.util.*;
 
-import static org.evomaster.client.java.controller.redis.RedisHeuristicsCalculator.MAX_REDIS_DISTANCE;
+import static org.evomaster.client.java.distance.heuristics.DistanceHelper.H_MAX_VALUE;
+import static org.evomaster.client.java.instrumentation.RedisCommand.RedisCommandType.*;
 
 /**
  * Class used to act upon Redis commands executed by the SUT
@@ -27,6 +28,11 @@ public class RedisHandler {
     private final List<RedisCommandEvaluation> evaluatedRedisCommands = new ArrayList<>();
 
     /**
+     * Commands that have a non-zero positive distance.
+     */
+    private final List<RedisFailedCommand> failedCommands = new ArrayList<>();
+
+    /**
      * Whether to calculate heuristics based on execution or not
      */
     private volatile boolean calculateHeuristics;
@@ -37,9 +43,9 @@ public class RedisHandler {
     private volatile boolean extractRedisExecution;
 
     /**
-     * The client must be created through a connection factory.
+     * The client must be created given both host and port for Redis DB.
      */
-    private RedisClient redisClient = null;
+    private ReflectionBasedRedisClient redisClient = null;
 
     private final RedisHeuristicsCalculator calculator = new RedisHeuristicsCalculator(new TaintHandlerExecutionTracer());
 
@@ -49,35 +55,40 @@ public class RedisHandler {
 
     public RedisHandler() {
         operations = new ArrayList<>();
-        extractRedisExecution = true;
         calculateHeuristics = true;
+        extractRedisExecution = true;
     }
 
     public void reset() {
         operations.clear();
         evaluatedRedisCommands.clear();
-    }
-
-    public boolean isCalculateHeuristics() {
-        return calculateHeuristics;
+        failedCommands.clear();
     }
 
     public boolean isExtractRedisExecution() {
         return extractRedisExecution;
     }
 
-    public void setCalculateHeuristics(boolean calculateHeuristics) {
-        this.calculateHeuristics = calculateHeuristics;
-    }
-
     public void setExtractRedisExecution(boolean extractRedisExecution) {
         this.extractRedisExecution = extractRedisExecution;
     }
 
+    public RedisExecutionsDto getExecutionDto() {
+        RedisExecutionsDto dto = new RedisExecutionsDto();
+        dto.failedCommands.addAll(failedCommands);
+        return dto;
+    }
+
+    public boolean isCalculateHeuristics() {
+        return calculateHeuristics;
+    }
+
+    public void setCalculateHeuristics(boolean calculateHeuristics) {
+        this.calculateHeuristics = calculateHeuristics;
+    }
+
     public void handle(RedisCommand info) {
-        if (extractRedisExecution) {
-            operations.add(info);
-        }
+        operations.add(info);
     }
 
     public List<RedisCommandEvaluation> getEvaluatedRedisCommands() {
@@ -86,90 +97,163 @@ public class RedisHandler {
             .forEach(redisCommand -> {
                 RedisDistanceWithMetrics distanceWithMetrics = computeDistance(redisCommand, redisClient);
                 evaluatedRedisCommands.add(new RedisCommandEvaluation(redisCommand, distanceWithMetrics));
-        });
+                registerFailedCommand(redisCommand, distanceWithMetrics.getDistance());
+            });
         operations.clear();
 
         return evaluatedRedisCommands;
     }
 
-    private RedisDistanceWithMetrics computeDistance(RedisCommand redisCommand, RedisClient redisClient) {
+    private void registerFailedCommand(RedisCommand redisCommand, double distance) {
+        RedisCommand.RedisCommandType type = redisCommand.getType();
+        if (distance > 0 && (
+            type.equals(GET) ||
+            type.equals(HGET) ||
+            type.equals(HGETALL) ||
+            type.equals(KEYS) ||
+            type.equals(SINTER) ||
+            type.equals(SMEMBERS))
+        ) {
+            // Further commands will be registered in future iterations.
+            failedCommands.add(createFailedCommand(redisCommand));
+        }
+    }
+
+    private RedisFailedCommand createFailedCommand(RedisCommand redisCommand) {
+        RedisCommand.RedisCommandType type = redisCommand.getType();
+        List<String> args = redisCommand.extractArgs();
+        switch (type) {
+            case GET:
+            case HGETALL:
+            case SINTER:
+            case SMEMBERS: {
+                if (args.isEmpty()) {
+                    throw new IllegalArgumentException("Command " + type.getLabel() + " has invalid arguments.");
+                }
+                return new RedisFailedCommand(
+                        type.getLabel().toUpperCase(),
+                        args,
+                        null,
+                        null);
+            }
+
+            case KEYS: {
+                if (args.isEmpty()) {
+                    throw new IllegalArgumentException("Command KEYS has invalid arguments.");
+                }
+                return new RedisFailedCommand(
+                        type.getLabel().toUpperCase(),
+                        Collections.emptyList(),
+                        RedisUtils.redisPatternToRegex(args.get(0)),
+                        null);
+            }
+
+            case HGET: {
+                if (args.size() < 2) {
+                    throw new IllegalArgumentException("Command HGET has invalid arguments.");
+                }
+                return new RedisFailedCommand(
+                        type.getLabel().toUpperCase(),
+                        Collections.singletonList((args.get(0))),
+                        null,
+                        args.get(1));
+            }
+            default:
+                throw new RuntimeException(
+                        "Invalid command registering failed redis commands. Type encountered: " + type);
+        }
+    }
+
+    private RedisDistanceWithMetrics computeDistance(RedisCommand redisCommand, ReflectionBasedRedisClient redisClient) {
         RedisCommand.RedisCommandType type = redisCommand.getType();
         try {
             switch (type) {
                 case KEYS:
                 case EXISTS: {
-                    List<RedisInfo> redisInfo = createRedisInfoForAllKeys(redisClient);
-                    return calculator.computeDistance(redisCommand, redisInfo);
+                    RedisKeyValueStore redisKeyValueStore = createRedisInfoForAllKeys(redisClient);
+                    return calculator.computeDistance(redisCommand, redisKeyValueStore);
                 }
 
                 case GET: {
-                    List<RedisInfo> redisInfo = createRedisInfoForKeysByType(REDIS_STRING_TYPE, redisClient);
-                    return calculator.computeDistance(redisCommand, redisInfo);
+                    RedisKeyValueStore redisKeyValueStore = createRedisInfoForKeysByType(REDIS_STRING_TYPE, redisClient);
+                    return calculator.computeDistance(redisCommand, redisKeyValueStore);
                 }
 
                 case HGET: {
-                    String field = redisCommand.extractArgs().get(1);
-                    List<RedisInfo> redisInfo = createRedisInfoForKeysByField(field, redisClient);
-                    return calculator.computeDistance(redisCommand, redisInfo);
+                    RedisKeyValueStore redisKeyValueStore = createRedisInfoForKeysByField(redisClient);
+                    return calculator.computeDistance(redisCommand, redisKeyValueStore);
                 }
 
                 case HGETALL: {
-                    List<RedisInfo> redisInfo = createRedisInfoForKeysByType(REDIS_HASH_TYPE, redisClient);
-                    return calculator.computeDistance(redisCommand, redisInfo);
+                    RedisKeyValueStore redisKeyValueStore = createRedisInfoForKeysByType(REDIS_HASH_TYPE, redisClient);
+                    return calculator.computeDistance(redisCommand, redisKeyValueStore);
                 }
 
                 case SMEMBERS: {
-                    List<RedisInfo> redisInfo = createRedisInfoForKeysByType(REDIS_SET_TYPE, redisClient);
-                    return calculator.computeDistance(redisCommand, redisInfo);
+                    RedisKeyValueStore redisKeyValueStore = createRedisInfoForKeysByType(REDIS_SET_TYPE, redisClient);
+                    return calculator.computeDistance(redisCommand, redisKeyValueStore);
                 }
 
                 case SINTER: {
                     List<String> keys = redisCommand.extractArgs();
-                    List<RedisInfo> redisInfo = createRedisInfoForIntersection(keys, redisClient);
-                    return calculator.computeDistance(redisCommand, redisInfo);
+                    RedisKeyValueStore redisKeyValueStore = createRedisInfoForIntersection(keys, redisClient);
+                    return calculator.computeDistance(redisCommand, redisKeyValueStore);
                 }
 
                 default:
-                    return new RedisDistanceWithMetrics(MAX_REDIS_DISTANCE, 0);
+                    return new RedisDistanceWithMetrics(H_MAX_VALUE, 0);
             }
         } catch (Exception e) {
             SimpleLogger.warn("Could not compute distance for " + type + ": " + e.getMessage());
-            return new RedisDistanceWithMetrics(MAX_REDIS_DISTANCE, 0);
+            return new RedisDistanceWithMetrics(H_MAX_VALUE, 0);
         }
     }
 
-    private List<RedisInfo> createRedisInfoForIntersection(List<String> keys, RedisClient redisClient) {
-        List<RedisInfo> redisData = new ArrayList<>();
-        keys.forEach(
-                key -> redisData.add(new RedisInfo(key, redisClient.getType(key), redisClient.getSetMembers(key))
-        ));
-        return redisData;
+    private RedisKeyValueStore createRedisInfoForIntersection(List<String> commandKeys, ReflectionBasedRedisClient redisClient) {
+        Set<String> keySet = redisClient.getKeysByType(REDIS_SET_TYPE);
+
+        //A Map structure is introduced here using the same keys that are stored in REDIS.
+        //The value for each one, since each key represents a SET, correspond to the members of that given set.
+        Map<String, RedisValueData> redisData = new HashMap<>();
+        keySet.forEach(
+                key -> redisData.put(key, new RedisValueData(redisClient.getSetMembers(key))));
+        return new RedisKeyValueStore(redisData);
     }
 
-    private List<RedisInfo> createRedisInfoForAllKeys(RedisClient redisClient) {
+    private RedisKeyValueStore createRedisInfoForAllKeys(ReflectionBasedRedisClient redisClient) {
         Set<String> keys = redisClient.getAllKeys();
-        List<RedisInfo> redisData = new ArrayList<>();
+
+        //A Map structure is introduced here using the same keys that are stored in REDIS.
+        //No value is needed in this case.
+        Map<String, RedisValueData> redisData = new HashMap<>();
         keys.forEach(
-                key -> redisData.add(new RedisInfo(key))
-        );
-        return redisData;
+                key -> redisData.put(key, null));
+        return new RedisKeyValueStore(redisData);
     }
 
-    private List<RedisInfo> createRedisInfoForKeysByType(String type, RedisClient redisClient) {
+    private RedisKeyValueStore createRedisInfoForKeysByType(String type, ReflectionBasedRedisClient redisClient) {
         Set<String> keys = redisClient.getKeysByType(type);
-        List<RedisInfo> redisData = new ArrayList<>();
-        keys.forEach(key -> redisData.add(new RedisInfo(key)));
-        return redisData;
+
+        //A Map structure is introduced here using the same keys that are stored in REDIS.
+        //No value is needed in this case.
+        Map<String, RedisValueData> redisData = new HashMap<>();
+        keys.forEach(
+                key -> redisData.put(key, null));
+        return new RedisKeyValueStore(redisData);
     }
 
-    private List<RedisInfo> createRedisInfoForKeysByField(String field, RedisClient redisClient) {
+    private RedisKeyValueStore createRedisInfoForKeysByField(ReflectionBasedRedisClient redisClient) {
         Set<String> keys = redisClient.getKeysByType(REDIS_HASH_TYPE);
-        List<RedisInfo> redisData = new ArrayList<>();
-        keys.forEach(key -> redisData.add(new RedisInfo(key, redisClient.hashFieldExists(key, field))));
-        return redisData;
+
+        //A Map structure is introduced here using the same keys that are stored in REDIS.
+        //The value for each one, since each key is of type HASH, correspond to the fields stored for that given key.
+        Map<String, RedisValueData> redisData = new HashMap<>();
+        keys.forEach(
+                key -> redisData.put(key, new RedisValueData(redisClient.getHashFields(key))));
+        return new RedisKeyValueStore(redisData);
     }
 
-    public void setRedisClient(RedisClient redisClient) {
+    public void setRedisClient(ReflectionBasedRedisClient redisClient) {
         this.redisClient = redisClient;
     }
 }

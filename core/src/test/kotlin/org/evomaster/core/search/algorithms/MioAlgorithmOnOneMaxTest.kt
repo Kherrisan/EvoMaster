@@ -7,19 +7,20 @@ import com.google.inject.TypeLiteral
 import com.netflix.governator.guice.LifecycleInjector
 import org.evomaster.core.BaseModule
 import org.evomaster.core.EMConfig
+import org.evomaster.core.search.SearchTestBase
 import org.evomaster.core.search.algorithms.onemax.OneMaxIndividual
 import org.evomaster.core.search.algorithms.onemax.OneMaxModule
 import org.evomaster.core.search.algorithms.onemax.OneMaxSampler
-import org.evomaster.core.search.service.ExecutionPhaseController
+import org.evomaster.core.search.service.time.ExecutionPhaseController
 import org.evomaster.core.search.service.Randomness
 import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.Test
 
 
-class MioAlgorithmOnOneMaxTest {
+class MioAlgorithmOnOneMaxTest : SearchTestBase(){
 
     val injector: Injector = LifecycleInjector.builder()
-                    .withModules(* arrayOf<Module>(OneMaxModule(), BaseModule()))
+                    .withModules(* arrayOf<Module>(OneMaxModule(), BaseModule(arrayOf("--blackBox","false"))))
                     .build().createInjector()
 
     @Test
@@ -37,7 +38,7 @@ class MioAlgorithmOnOneMaxTest {
         config.maxEvaluations = 30000
         config.stoppingCriterion = EMConfig.StoppingCriterion.ACTION_EVALUATIONS
         val epc = injector.getInstance(ExecutionPhaseController::class.java)
-        epc.startSearch()
+        epc.markStartingSearch()
 
         val n = 20
         sampler.n = n

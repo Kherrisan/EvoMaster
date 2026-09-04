@@ -6,24 +6,31 @@ import org.evomaster.client.java.controller.api.dto.ExtraHeuristicEntryDto
 import org.evomaster.client.java.controller.api.dto.TestResultsDto
 import org.evomaster.core.StaticCounter
 import org.evomaster.core.logging.LoggingUtil
-import org.evomaster.core.mongo.MongoDbAction
-import org.evomaster.core.mongo.MongoDbActionResult
-import org.evomaster.core.mongo.MongoDbActionTransformer
-import org.evomaster.core.mongo.MongoExecution
+import org.evomaster.core.database.mongo.MongoDbAction
+import org.evomaster.core.database.mongo.MongoDbActionResult
+import org.evomaster.core.database.mongo.MongoDbActionTransformer
+import org.evomaster.core.database.mongo.MongoExecution
+import org.evomaster.core.database.redis.RedisDbAction
+import org.evomaster.core.database.redis.RedisDbActionResult
+import org.evomaster.core.database.redis.RedisDbActionTransformer
+import org.evomaster.core.database.redis.RedisExecution
+import org.evomaster.core.database.sql.DatabaseExecution
+import org.evomaster.core.database.sql.SqlAction
+import org.evomaster.core.database.sql.SqlActionResult
+import org.evomaster.core.database.sql.SqlActionTransformer
+import org.evomaster.core.database.sql.SqlActionUtils
 import org.evomaster.core.remote.service.RemoteController
-import org.evomaster.core.search.AdditionalTargetCollector
+import org.evomaster.core.extra.shared.AdditionalTargetCollector
 import org.evomaster.core.search.action.Action
 import org.evomaster.core.search.action.ActionResult
 import org.evomaster.core.search.FitnessValue
 import org.evomaster.core.search.Individual
-import org.evomaster.core.search.TargetInfo
 import org.evomaster.core.search.gene.sql.SqlAutoIncrementGene
 import org.evomaster.core.search.gene.sql.SqlForeignKeyGene
 import org.evomaster.core.search.gene.sql.SqlPrimaryKeyGene
 import org.evomaster.core.search.service.ExtraHeuristicsLogger
 import org.evomaster.core.search.service.FitnessFunction
-import org.evomaster.core.search.service.SearchTimeController
-import org.evomaster.core.sql.*
+import org.evomaster.core.search.service.time.SearchTimeController
 import org.evomaster.core.taint.TaintAnalysis
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -97,7 +104,7 @@ abstract class EnterpriseFitness<T> : FitnessFunction<T>() where T : Individual 
         }
 
         val startingIndex = allSqlActions.indexOfLast { it.representExistingData } + 1
-        if(!SqlActionUtils.verifyExistingDataFirst(allSqlActions)){
+        if(!SqlActionUtils.isValidExistingDataFirst(allSqlActions, true)){
             throw IllegalArgumentException("SQLAction representing existing data are not in order")
         }
 
@@ -142,7 +149,24 @@ abstract class EnterpriseFitness<T> : FitnessFunction<T>() where T : Individual 
         }
         dto.idCounter = StaticCounter.getAndIncrease()
 
-        val sqlResults = rc.executeDatabaseInsertionsAndGetIdMapping(dto)
+        /*
+            Timed because this is where generated SQL rows are actually paid for. The insertions run
+            against the SUT's database on every evaluation of an individual that carries them, so a
+            single solver call can impose a cost repeated for the rest of the search — a cost that no
+            solver-side counter observes, since it is incurred here rather than in solve().
+
+            Only measured when the statistics that would report it are being collected, since the
+            columns are emitted under the same flag.
+         */
+        val timeInsertions = config.collectSqlZ3Stats
+        val insertionStart = if (timeInsertions) System.currentTimeMillis() else 0L
+        val sqlResults = try {
+            rc.executeDatabaseInsertionsAndGetIdMapping(dto)
+        } finally {
+            if (timeInsertions) {
+                statistics.reportSqlInsertionExecution(System.currentTimeMillis() - insertionStart)
+            }
+        }
         val map = sqlResults?.idMapping
         val executedResults = sqlResults?.executionResults
 
@@ -200,6 +224,46 @@ abstract class EnterpriseFitness<T> : FitnessFunction<T>() where T : Individual 
 
         executedResults?.forEachIndexed { index, b ->
             mongoDbResults[index].setInsertExecutionResult(b)
+        }
+
+        return true
+    }
+
+    /** Transforms and executes a list of Redis [RedisDbAction] as insertion commands
+     * against the remote Redis database via the SUT controller.
+     *
+     * @param allRedisActions Redis actions to be transformed into insertion commands and executed.
+     * @param actionResults mutable list shared with the caller where the result of each
+     *                      Redis action will be appended, preserving the same order as [allRedisActions].
+     * @return whether [allRedisActions] execute successfully.
+     */
+    fun doRedisDbCalls(
+        allRedisActions: List<RedisDbAction>,
+        actionResults: MutableList<ActionResult>
+    ): Boolean {
+        if (allRedisActions.isEmpty()) return true
+
+        val redisResults = allRedisActions.map { RedisDbActionResult(it.getLocalId()) }
+        actionResults.addAll(redisResults)
+
+        val dto = RedisDbActionTransformer.transform(allRedisActions)
+
+        val results = rc.executeRedisDatabaseInsertions(dto)
+        if (results?.executionResults != null) {
+            var dtoIndex = 0
+            allRedisActions.forEachIndexed { actionIndex, action ->
+                // Now actions such as SaddFromSinter have multiple insertion dtos related.
+                val count = action.insertionsCount()
+                val success = (dtoIndex until dtoIndex + count).all {
+                    results.executionResults[it]
+                }
+                if (!success) {
+                    log.warn("FAILED insertion $actionIndex: ${action.getName()}")
+                    assert(false)
+                }
+                redisResults[actionIndex].setInsertExecutionResult(success)
+                dtoIndex += count
+            }
         }
 
         return true
@@ -330,6 +394,22 @@ abstract class EnterpriseFitness<T> : FitnessFunction<T>() where T : Individual 
             }
             fv.aggregateMongoDatabaseData()
         }
+
+        if (configuration.heuristicsForRedis) {
+            handleRedisHeuristics(dto, fv)
+        }
+
+        if (configuration.heuristicsForDynamoDb) {
+            handleDynamoDbHeuristics(dto, fv)
+        }
+
+        if (configuration.extractRedisExecutionInfo) {
+            for (i in 0 until dto.extraHeuristics.size) {
+                val extra = dto.extraHeuristics[i]
+                fv.setRedisExecution(i, RedisExecution.fromDto(extra.redisExecutionsDto))
+            }
+            fv.aggregateRedisDatabaseData()
+        }
     }
 
     private fun handleSqlHeuristics(
@@ -354,7 +434,7 @@ abstract class EnterpriseFitness<T> : FitnessFunction<T>() where T : Individual 
                 .toList()
 
             if (!toMinimize.isEmpty()) {
-                fv.setExtraToMinimize(i, toMinimize)
+                fv.addExtraObjectivesToMinimize(i, toMinimize)
             }
 
             extra.heuristics
@@ -389,7 +469,7 @@ abstract class EnterpriseFitness<T> : FitnessFunction<T>() where T : Individual 
                 .toList()
 
             if (toMinimize.isNotEmpty()) {
-                fv.setExtraToMinimize(i, toMinimize)
+                fv.addExtraObjectivesToMinimize(i, toMinimize)
             }
 
             extra.heuristics
@@ -400,6 +480,72 @@ abstract class EnterpriseFitness<T> : FitnessFunction<T>() where T : Individual 
                             statistics.reportMongoHeuristicEvaluationFailure()
                         } else {
                             statistics.reportMongoHeuristicEvaluationSuccess()
+                        }
+                    }
+                }
+        }
+    }
+
+    private fun handleRedisHeuristics(dto: TestResultsDto, fv: FitnessValue) {
+        for (i in 0 until dto.extraHeuristics.size) {
+
+            val extra = dto.extraHeuristics[i]
+
+            extraHeuristicsLogger.writeHeuristics(extra.heuristics, i)
+
+            val toMinimize = extra.heuristics
+                .filter {
+                    it != null
+                            && it.objective == ExtraHeuristicEntryDto.Objective.MINIMIZE_TO_ZERO
+                            && it.type == ExtraHeuristicEntryDto.Type.REDIS
+                }.map { it.value }
+                .toList()
+
+            if (toMinimize.isNotEmpty()) {
+                fv.addExtraObjectivesToMinimize(i, toMinimize)
+            }
+
+            extra.heuristics
+                .filterNotNull().forEach {
+                    if (it.type == ExtraHeuristicEntryDto.Type.REDIS) {
+                        statistics.reportNumberOfEvaluatedDocumentsForRedisHeuristic(it.numberOfEvaluatedRecords)
+                        if (it.extraHeuristicEvaluationFailure) {
+                            statistics.reportRedisHeuristicEvaluationFailure()
+                        } else {
+                            statistics.reportRedisHeuristicEvaluationSuccess()
+                        }
+                    }
+                }
+        }
+    }
+
+    /** Applies DynamoDB predicate distances and records their evaluation metrics. */
+    private fun handleDynamoDbHeuristics(dto: TestResultsDto, fv: FitnessValue) {
+        for (i in 0 until dto.extraHeuristics.size) {
+            val extra = dto.extraHeuristics[i]
+
+            extraHeuristicsLogger.writeHeuristics(extra.heuristics, i)
+
+            val toMinimize = extra.heuristics
+                .filter {
+                    it != null
+                            && it.objective == ExtraHeuristicEntryDto.Objective.MINIMIZE_TO_ZERO
+                            && it.type == ExtraHeuristicEntryDto.Type.DYNAMODB
+                }.map { it.value }
+                .toList()
+
+            if (toMinimize.isNotEmpty()) {
+                fv.addExtraObjectivesToMinimize(i, toMinimize)
+            }
+
+            extra.heuristics
+                .filterNotNull().forEach {
+                    if (it.type == ExtraHeuristicEntryDto.Type.DYNAMODB) {
+                        statistics.reportNumberOfEvaluatedItemsForDynamoDbHeuristic(it.numberOfEvaluatedRecords)
+                        if (it.extraHeuristicEvaluationFailure) {
+                            statistics.reportDynamoDbHeuristicEvaluationFailure()
+                        } else {
+                            statistics.reportDynamoDbHeuristicEvaluationSuccess()
                         }
                     }
                 }

@@ -1,10 +1,12 @@
 package org.evomaster.core.remote
 
+import org.evomaster.core.Lazy
 import org.glassfish.jersey.apache.connector.ApacheClientProperties
 import org.glassfish.jersey.apache.connector.ApacheConnectorProvider
 import org.glassfish.jersey.client.ClientConfig
 import org.glassfish.jersey.client.ClientProperties
 import org.glassfish.jersey.client.HttpUrlConnectorProvider
+import org.glassfish.jersey.client.RequestEntityProcessing
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import javax.net.ssl.*
@@ -61,7 +63,7 @@ object HttpClientFactory {
             .register(org.glassfish.jersey.jackson.JacksonFeature::class.java)
             .property(ApacheClientProperties.DISABLE_COOKIES, true)
 
-        return ClientBuilder.newBuilder()
+        val client = ClientBuilder.newBuilder()
             .withConfig(config)
             .sslContext(sc)
             .hostnameVerifier(allHostsValid)
@@ -70,6 +72,21 @@ object HttpClientFactory {
             .property(ClientProperties.FOLLOW_REDIRECTS, followRedirects)
             // see discussion about OpenAPI and RFC 9110 in RestActionBuilderV3
             .property(ClientProperties.SUPPRESS_HTTP_COMPLIANCE_VALIDATION,true)
+            // buffer request bodies to send Content-Length instead of chunked transfer-encoding,
+            // which some servers (e.g. Django/WSGI dev server) do not parse reliably
+            .property(ClientProperties.REQUEST_ENTITY_PROCESSING, RequestEntityProcessing.BUFFERED)
             .build()
+
+        Lazy.assert {
+            //using Jersey is a shitshow... based on classpath misconfiguration, can pick up wrong provider
+            //regardless of what you specify here, doing it silently... WTF !?!
+            //(client.configuration as ClientConfig).connectorProvider.javaClass == ApacheConnectorProvider::class.java
+            //FUCK JERSEY !!! even if you shade it in a third-party library, still can be picked-up and fuck up the casting!!!
+            //check passes on IDE, but then fail in Maven when using shaded client in the E2E... and we cannot exclude it there
+            //with maven because it is shaded... arghhhh, I hate Jersey
+            true
+        }
+
+        return client
     }
 }

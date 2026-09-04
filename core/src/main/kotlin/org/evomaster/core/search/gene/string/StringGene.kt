@@ -36,6 +36,7 @@ import org.evomaster.core.search.service.Randomness
 import org.evomaster.core.search.service.mutator.MutationWeightControl
 import org.evomaster.core.search.service.mutator.genemutation.AdditionalGeneMutationInfo
 import org.evomaster.core.search.service.mutator.genemutation.SubsetGeneMutationSelectionStrategy
+import org.evomaster.core.utils.RegexWithExternalFlags
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.lang.IllegalStateException
@@ -811,16 +812,17 @@ class StringGene(
                     .filter{RegexUtils.isMeaningfulRegex(it.value)}
                     .filter{RegexUtils.isNotUselessRegex(it.value) }
                     .map {
-                        if(it.stringSpecialization == StringSpecialization.REGEX_WHOLE) {
+                        val regex = if(it.stringSpecialization == StringSpecialization.REGEX_WHOLE) {
                             RegexSharedUtils.forceFullMatch(it.value)
                         } else {
                             RegexSharedUtils.handlePartialMatch(it.value)
                         }
+                        RegexWithExternalFlags(regex, it.externalRegexFlagsBitmask)
                     }
                     //.joinToString("|")
-                    .forEach {regex ->
+                    .forEach {(regex, externalFlags) ->
                       try {
-                              toAddGenes.add(RegexHandler.createGeneForJVM(regex))
+                              toAddGenes.add(RegexHandler.createGeneForJVM(regex, externalFlags))
                               log.trace("Regex, added specification for: {}", regex)
                           } catch (e: Exception) {
                               LoggingUtil.uniqueWarn(log, "Failed to handle regex: $regex")
@@ -1034,20 +1036,23 @@ class StringGene(
             }
         }
 
-        //TODO would need updating...
-//        if(other is StringGene) {
-//            this.selectedSpecialization = other.selectedSpecialization
-//
-//            this.specializations.clear()
-//            this.specializations.addAll(other.specializations)
-//
-//            killAllChildren()
-//            addChildren(other.specializationGenes.map { it.copy() })
-//
-//            this.tainted = other.tainted
+        if(other is StringGene) {
+            this.value = other.value
+            this.selectedSpecialization = other.selectedSpecialization
+
+            this.specializations.clear()
+            this.specializations.addAll(other.specializations)
+
+            killAllChildren()
+            val adopted = other.specializationGenes.map { it.copy() }
+            adopted.forEach { it.resetLocalIdRecursively()}
+            addChildren(adopted)
+
+            this.tainted = other.tainted
+            //TODO NOT sure if should handle this???
 //            this.bindingIds.clear()
 //            this.bindingIds.addAll(other.bindingIds)
-//        }
+        }
 
         return true
     }
@@ -1100,6 +1105,11 @@ class StringGene(
 
 
     override fun unsafeSetFromStringValue(value: String): Boolean {
+
+        /*
+            TODO most likely this will need to be refactored, to require either "" or '' quotes.
+            See NullableGene
+         */
 
         this.value = value
         selectedSpecialization = -1

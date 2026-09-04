@@ -2,8 +2,6 @@ package org.evomaster.core.search
 
 import org.evomaster.client.java.instrumentation.shared.TaintInputName
 import org.evomaster.core.EMConfig
-import org.evomaster.core.sql.SqlAction
-import org.evomaster.core.sql.SqlActionUtils
 import org.evomaster.core.logging.LoggingUtil
 import org.evomaster.core.problem.api.param.Param
 import org.evomaster.core.problem.enterprise.EnterpriseIndividual
@@ -12,6 +10,7 @@ import org.evomaster.core.problem.externalservice.ApiExternalServiceAction
 import org.evomaster.core.search.action.*
 import org.evomaster.core.search.gene.Gene
 import org.evomaster.core.search.gene.interfaces.TaintableGene
+import org.evomaster.core.search.gene.interfaces.UserExamplesGene
 import org.evomaster.core.search.gene.wrapper.OptionalGene
 import org.evomaster.core.search.service.Randomness
 import org.evomaster.core.search.service.SearchGlobalState
@@ -180,11 +179,9 @@ abstract class Individual(
      * All invariants should always be satisfied after any modification of the individual.
      * If not, this is a bug.
      */
-    fun verifyValidity(checkForTaints: Boolean = false){
+    open fun verifyValidity(checkForTaints: Boolean = false){
 
         groupsView()?.verifyGroups()
-
-        SqlActionUtils.checkActions(seeInitializingActions().filterIsInstance<SqlAction>())
 
         seeAllActions().forEach { a ->
             if(!a.isGloballyValid()){
@@ -233,6 +230,12 @@ abstract class Individual(
      */
     fun seeFullTreeGenes(filter: ActionFilter = ActionFilter.ALL) : List<Gene>{
         return seeTopGenes(filter).flatMap { it.flatView() }
+    }
+
+    fun getAllActiveUsedExamples() : List<Gene>  {
+        return seeFullTreeGenes()
+            .filter { it is UserExamplesGene && it.isUsedForExamples() }
+            .filter { it.staticCheckIfImpactPhenotype() }
     }
 
     /**
@@ -340,8 +343,9 @@ abstract class Individual(
     /**
      * Returns true if the initialization actions
      * are correct (i.e. all constraints are satisfied)
+     * If [errors] is provided, then error messages will be added to it (if any)
      */
-    abstract fun verifyInitializationActions(): Boolean
+    abstract fun isValidInitializationActions(errors: MutableList<String>? = null): Boolean
 
     /**
      * Attempts to repair the initialization actions.

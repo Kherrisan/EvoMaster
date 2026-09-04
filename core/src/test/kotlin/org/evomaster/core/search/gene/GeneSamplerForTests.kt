@@ -1,12 +1,20 @@
 package org.evomaster.core.search.gene
 
 import org.evomaster.client.java.instrumentation.shared.TaintInputName
+import org.evomaster.core.parser.RegexType
 import org.evomaster.core.search.gene.collection.*
 import org.evomaster.core.search.gene.datetime.*
 import org.evomaster.core.search.gene.interfaces.ComparableGene
 import org.evomaster.core.search.gene.mongo.ObjectIdGene
+import org.evomaster.core.search.gene.jsonpatch.JsonPatchDocumentGeneBuilder
+import org.evomaster.core.search.gene.jsonpatch.JsonPatchDocumentGene
+import org.evomaster.core.search.gene.jsonpatch.JsonPatchFromPathGene
+import org.evomaster.core.search.gene.jsonpatch.JsonPatchOperationGene
+import org.evomaster.core.search.gene.jsonpatch.JsonPatchPathOnlyGene
+import org.evomaster.core.search.gene.jsonpatch.JsonPatchPathValueGene
 import org.evomaster.core.search.gene.regex.*
 import org.evomaster.core.search.gene.sql.*
+import org.evomaster.core.database.sql.schema.TableId
 import org.evomaster.core.search.gene.sql.geometric.*
 import org.evomaster.core.search.gene.network.CidrGene
 import org.evomaster.core.search.gene.network.InetGene
@@ -27,6 +35,7 @@ import org.evomaster.core.search.gene.uri.UriGene
 import org.evomaster.core.search.gene.uri.UrlHttpGene
 import org.evomaster.core.search.gene.utils.NumberMutatorUtils
 import org.evomaster.core.search.service.Randomness
+import org.evomaster.core.utils.CharacterRange
 import java.io.File
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -80,7 +89,7 @@ object GeneSamplerForTests {
                         genes.add(c as KClass<out Gene>)
                     }
                 }
-        return genes
+        return genes.sortedBy {it.qualifiedName}
     }
 
 
@@ -133,6 +142,9 @@ object GeneSamplerForTests {
             PatternCharacterBlockGene::class -> samplePatternCharacterBlock(rand) as T
             QuantifierRxGene::class -> sampleQuantifierRxGene(rand) as T
             RegexGene::class -> sampleRegexGene(rand) as T
+            BackReferenceRxGene::class -> sampleBackReferenceRxGene(rand) as T
+            AssertionRxGene::class -> sampleAssertionRxGene(rand) as T
+            ObjectWithAttributesGene::class -> sampleObjectGeneWithAttributes(rand) as T
 
             //SQL genes
             SqlJSONPathGene::class -> sampleSqlJSONPathGene(rand) as T
@@ -173,6 +185,12 @@ object GeneSamplerForTests {
 
             // Mongo genes
             ObjectIdGene::class -> sampleMongoObjectIdGene(rand) as T
+
+            // JSON Patch genes
+            JsonPatchDocumentGene::class  -> sampleJsonPatchDocumentGene(rand) as T
+            JsonPatchPathOnlyGene::class  -> sampleJsonPatchPathOnlyGene(rand) as T
+            JsonPatchFromPathGene::class  -> sampleJsonPatchFromPathGene(rand) as T
+            JsonPatchPathValueGene::class -> sampleJsonPatchPathValueGene(rand) as T
 
             else -> throw IllegalStateException("No sampler for $klass")
         }
@@ -316,6 +334,7 @@ object GeneSamplerForTests {
                 .filter { !it.isAbstract }
                 .filter { it.java != CycleObjectGene::class.java && it.java !== LimitObjectGene::class.java }
                 .filter { it.java != ArrayGene::class.java && it.java != SqlMultidimensionalArrayGene::class.java }
+                .filter{ it.java != SqlPrimaryKeyGene::class.java }
         // TODO might filter out some more genes here
     }
 
@@ -373,7 +392,8 @@ object GeneSamplerForTests {
     private fun sampleSqlForeignKeyGene(rand: Randomness): SqlForeignKeyGene {
         return SqlForeignKeyGene(sourceColumn = "rand source column",
                 uniqueId = rand.nextLong(min = 0L, max = Long.MAX_VALUE),
-                targetTable = "rand target table",
+                targetTable = TableId("rand target table"),
+                targetColumn = "rand target column",
                 nullable = rand.nextBoolean(),
                 uniqueIdOfPrimaryKey = rand.nextLong())
     }
@@ -399,8 +419,33 @@ object GeneSamplerForTests {
         return ObjectIdGene("rand ObjectIdGene ${rand.nextInt()}")
     }
 
+    fun sampleBackReferenceRxGene(rand: Randomness): BackReferenceRxGene {
+        val captureGroup = sampleDisjunctionListRxGene(rand)
+        // as we do not allow to mutate the inner captureGroup gene using the backref gene we must first initialize it
+        captureGroup.doInitialize(rand)
+        return BackReferenceRxGene(
+            groupIndex = rand.nextInt(1, 99),
+            captureGroup = captureGroup
+        )
+    }
+
+    fun sampleAssertionRxGene(rand: Randomness): AssertionRxGene {
+        // since we do not want assertion repairs to fail for sampleRegexGene
+        // we make trivial assertions "(?=)", which always succeed repairs
+        val innerDisj = DisjunctionRxGene("emptyDisj", emptyList(), true, true)
+        val innerGene = DisjunctionListRxGene(listOf(innerDisj))
+        return AssertionRxGene(innerGene=innerGene, AssertionType.LOOKAHEAD)
+    }
+
     fun sampleRegexGene(rand: Randomness): RegexGene {
-        return RegexGene(name = "rand RegexGene", disjunctions = sampleDisjunctionListRxGene(rand), "None")
+        return RegexGene(
+            name = "rand RegexGene",
+            disjunctions = sampleDisjunctionListRxGene(rand),
+            "(?s).*", //TODO tricky, we want to sample different structures,
+                                // but still validation should not fail
+                            // (?s) makes "." match all chars instead of excluding line terminators
+            RegexType.JVM
+        )
     }
 
     fun sampleQuantifierRxGene(rand: Randomness): QuantifierRxGene {
@@ -437,8 +482,9 @@ object GeneSamplerForTests {
                 .filter { it.isSubclassOf(RxTerm::class) }
                 //let's avoid huge trees...
                 .filter {
-                    (it.java != DisjunctionListRxGene::class.java && it.java != DisjunctionRxGene::class.java)
-                            || rand.nextBoolean()
+                    (it.java != DisjunctionListRxGene::class.java && it.java != DisjunctionRxGene::class.java
+                    && it.java != BackReferenceRxGene::class.java && it.java != AssertionRxGene::class.java) // as this also contains a DisjunctionListRxGene within
+                            || rand.nextBoolean(0.2) // reduced chance for larger trees
                 }
 
         val numberOfTerms = rand.nextInt(1, 3)
@@ -452,8 +498,8 @@ object GeneSamplerForTests {
 
     fun sampleCharacterRangeRxGene(rand: Randomness): CharacterRangeRxGene {
         return CharacterRangeRxGene(
-                negated = false, // TODO update once fixed
-                ranges = listOf(Pair('a', 'z'))
+                negated = rand.nextBoolean(),
+                ranges = listOf(CharacterRange('a', 'z'))
         )
     }
 
@@ -582,18 +628,18 @@ object GeneSamplerForTests {
             ObjectGene(
                     name = "rand ObjectGene ${rand.nextInt()}",
                     fields = listOf(
-                            sample(rand.choose(selection), rand),
-                            sample(rand.choose(selection), rand),
-                            sample(rand.choose(selection), rand)
+                            sample(rand.choose(selection), rand).apply { name += "_0" },
+                            sample(rand.choose(selection), rand).apply { name += "_1" },
+                            sample(rand.choose(selection), rand).apply { name += "_2" }
                     )
             )
         }else{
             ObjectGene(
                     name = "rand ObjectGene ${rand.nextInt()}",
                     fixedFields = listOf(
-                            sample(rand.choose(selection), rand),
-                            sample(rand.choose(selection), rand),
-                            sample(rand.choose(selection), rand)
+                            sample(rand.choose(selection), rand).apply { name += "_0" },
+                            sample(rand.choose(selection), rand).apply { name += "_1" },
+                            sample(rand.choose(selection), rand).apply { name += "_2" }
                     ),
                     refType = null,
                     isFixed = isFixed,
@@ -615,23 +661,58 @@ object GeneSamplerForTests {
 
         val min = rand.nextInt(0, 2)
 
+        val minSize = rand.choose(listOf(null, min))
+        val maxSize = rand.choose(listOf(null, min + rand.nextInt(1, 3)))
+        val printablePairGene = if (minSize == 2) {
+            samplePairGeneWithAtLeastTwoKeyValues(rand) { samplePrintablePairGene(rand) }
+        } else {
+            samplePrintablePairGene(rand)
+        }
+
         return FixedMapGene(
                 name = "rand MapGene",
-                minSize = rand.choose(listOf(null, min)),
-                maxSize = rand.choose(listOf(null, min + rand.nextInt(1, 3))),
-                template = samplePrintablePairGene(rand)
+                minSize = minSize,
+                maxSize = maxSize,
+                template = printablePairGene
         )
     }
 
+
+    private fun <T : PairGene<*, *>> samplePairGeneWithAtLeastTwoKeyValues(rand: Randomness, sampler: () -> T): T {
+        return generateSequence { sampler() }
+            .first { genePair ->
+                val keyGene = genePair.first
+
+                // If it cannot change, it cannot have "at least two values"
+                if (!keyGene.isMutable()) return@first false
+
+                // Initialize the first instance and compare to the second instance with forced new value
+                val firstInstance = keyGene.copy().apply { doInitialize(rand) }
+                val secondInstance = firstInstance.copy().apply { randomize(rand, true) }
+
+                !firstInstance.containsSameValueAs(secondInstance)
+            }
+    }
+
     fun sampleFlexibleMapGene(rand: Randomness): FlexibleMapGene<*> {
-
+        // 1. Sample minSize and maxSize
         val min = rand.nextInt(0, 2)
+        val minSize = rand.choose(listOf(null, min))
+        val maxSize = rand.choose(listOf(null, min + rand.nextInt(1, 3)))
 
+        // 2. Sample pairGeneTemplate
+        val printableFlexiblePairGene = if (minSize == 2) {
+            samplePairGeneWithAtLeastTwoKeyValues(rand) { samplePrintableFlexiblePairGene(rand) }
+        } else {
+            samplePrintableFlexiblePairGene(rand)
+        }
+
+        // 3. Create FlexibleMapGene
         return FlexibleMapGene(
             name = "rand MapGene",
-            minSize = rand.choose(listOf(null, min)),
-            maxSize = rand.choose(listOf(null, min + rand.nextInt(1, 3))),
-            template = samplePrintableFlexiblePairGene(rand)
+            minSize = minSize,
+            maxSize = maxSize,
+            template = printableFlexiblePairGene
         )
     }
 
@@ -904,4 +985,87 @@ object GeneSamplerForTests {
         }
     }
 
+    private fun sampleJsonPatchDocumentGene(rand: Randomness): JsonPatchDocumentGene {
+        return JsonPatchDocumentGene("rand JsonPatchDocumentGene ${rand.nextInt()}")
+    }
+
+    private fun sampleJsonPatchPathOnlyGene(rand: Randomness): JsonPatchPathOnlyGene {
+        return JsonPatchPathOnlyGene(
+            "rand JsonPatchPathOnlyGene ${rand.nextInt()}",
+            JsonPatchOperationGene.OP_REMOVE,
+            EnumGene(JsonPatchDocumentGeneBuilder.FIELD_PATH, JsonPatchDocumentGeneBuilder.DEFAULT_PATHS)
+        )
+    }
+
+    private fun sampleJsonPatchFromPathGene(rand: Randomness): JsonPatchFromPathGene {
+        val operationName = rand.choose(listOf(JsonPatchOperationGene.OP_MOVE, JsonPatchOperationGene.OP_COPY))
+        return JsonPatchFromPathGene(
+            "rand JsonPatchFromPathGene ${rand.nextInt()}",
+            operationName,
+            fromGene = EnumGene(JsonPatchDocumentGeneBuilder.FIELD_FROM, JsonPatchDocumentGeneBuilder.DEFAULT_PATHS),
+            pathGene  = EnumGene(JsonPatchDocumentGeneBuilder.FIELD_PATH, JsonPatchDocumentGeneBuilder.DEFAULT_PATHS)
+        )
+    }
+
+    private fun sampleJsonPatchPathValueGene(rand: Randomness): JsonPatchPathValueGene {
+        val operationName = rand.choose(listOf(JsonPatchOperationGene.OP_ADD, JsonPatchOperationGene.OP_REPLACE, JsonPatchOperationGene.OP_TEST))
+        val pathEnum = EnumGene(JsonPatchDocumentGeneBuilder.FIELD_PATH, JsonPatchDocumentGeneBuilder.DEFAULT_PATHS)
+        val entry = PairGene<EnumGene<String>, Gene>(
+            JsonPatchDocumentGeneBuilder.ENTRY_STRING,
+            pathEnum,
+            StringGene(JsonPatchDocumentGeneBuilder.FIELD_VALUE)
+        )
+        return JsonPatchPathValueGene(
+            "rand JsonPatchPathValueGene ${rand.nextInt()}",
+            operationName,
+            ChoiceGene("${operationName}PathValue", listOf(entry))
+        )
+    }
+
+    fun sampleObjectGeneWithAttributes(rand: Randomness): ObjectWithAttributesGene {
+
+        // Use a restricted selection similar to selectionForArrayTemplate()
+        // to avoid problematic genes that can cause issues with containsSameValueAs
+        val selection = geneClasses
+            .filter { !it.isAbstract }
+            .filter { it.java != CycleObjectGene::class.java && it.java != LimitObjectGene::class.java }
+            .filter { it.java != SqlMultidimensionalArrayGene::class.java }
+            // Exclude genes with problematic compareTo implementations
+            .filter { it.java != SqlRangeGene::class.java }
+            .filter { it.java != SqlMultiRangeGene::class.java }
+
+        // Use samplePrintableTemplate to ensure fields are printable
+        // This is consistent with how sampleArrayGene works
+        val fields = listOf(
+            samplePrintableTemplate(selection, rand).apply { name += "_0" },
+            samplePrintableTemplate(selection, rand).apply { name += "_1" },
+            samplePrintableTemplate(selection, rand).apply { name += "_2" }
+        )
+
+        // Only StringGene can be an XML attribute (attributes are always strings)
+        // #text is content, not an attribute
+        val stringFields = fields
+            .filterIsInstance<StringGene>()
+            .filter { it.name != ObjectGene.contentXMLTag }
+
+        // Strategy: use a small number of fixed attribute configurations
+        val seed = rand.nextInt(0, 10)
+        val attributeNames = when {
+            seed < 7 || stringFields.isEmpty() -> emptySet() // 70% no attributes
+            seed < 9 && stringFields.isNotEmpty() -> setOf(stringFields[0].name)
+            stringFields.size >= 2 -> setOf(stringFields[0].name, stringFields[1].name)
+            stringFields.isNotEmpty() -> setOf(stringFields[0].name)
+            else -> emptySet()
+        }
+
+        return ObjectWithAttributesGene(
+            name = "rand ObjectGeneWithAttributes ${rand.nextInt()}",
+            fixedFields = fields,
+            refType = null,
+            isFixed = true,
+            template = null,
+            additionalFields = null,
+            attributeNames = attributeNames
+        )
+    }
 }

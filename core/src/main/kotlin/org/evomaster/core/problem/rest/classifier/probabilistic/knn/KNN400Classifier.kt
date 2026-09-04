@@ -4,14 +4,15 @@ import org.evomaster.core.EMConfig
 import org.evomaster.core.problem.rest.data.Endpoint
 import org.evomaster.core.search.service.Randomness
 import org.evomaster.core.problem.rest.classifier.probabilistic.AbstractProbabilistic400Classifier
+import kotlin.String
 
 
 class KNN400Classifier(
-    warmup: Int = 10,
-    encoderType: EMConfig.EncoderType = EMConfig.EncoderType.NORMAL,
-    metricType: EMConfig.AIClassificationMetrics = EMConfig.AIClassificationMetrics.TIME_WINDOW,
+    warmup: Int,
+    encoderType: EMConfig.EncoderType,
+    metricType: EMConfig.AIClassificationMetrics,
     private val k: Int = 3,
-    private val maxStoredSamples: Int = 10000,
+    private val maxStoredSamples: Int = 1000, // Values more than 1000 make the classification very time-consuming
     randomness: Randomness
 ) : AbstractProbabilistic400Classifier<KNN400EndpointModel>(
     warmup, encoderType, metricType, randomness) {
@@ -19,6 +20,7 @@ class KNN400Classifier(
     override fun createEndpointModel(
         endpoint: Endpoint,
         warmup: Int,
+        modelKeys: List<String>,
         dimension: Int,
         encoderType: EMConfig.EncoderType,
         metricType: EMConfig.AIClassificationMetrics,
@@ -27,6 +29,7 @@ class KNN400Classifier(
         return KNN400EndpointModel(
             endpoint,
             warmup,
+            modelKeys,
             dimension,
             encoderType,
             metricType,

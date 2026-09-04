@@ -1,29 +1,110 @@
 package org.evomaster.core
 
 import org.evomaster.client.java.controller.api.ControllerConstants
+import org.evomaster.core.EMConfig.AIResponseClassifierModel
 import org.evomaster.core.config.ConfigProblemException
 import org.evomaster.core.output.OutputFormat
 import org.evomaster.core.output.naming.NamingStrategy
 import org.evomaster.core.search.service.IdMapper
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import java.net.InetAddress
-import java.net.URL
 
 internal class EMConfigTest{
 
-    private val controllerPortOption = "sutControllerPort"
+    private val sutControllerPort = "sutControllerPort"
     private val endpointFocus = "endpointFocus"
     private val endpointPrefix = "endpointPrefix"
+    private val sqli = "sqli"
+    private val blackBox = "blackBox"
+    private val generateMongoData = "generateMongoData"
+
+
+    @Test
+    fun testChangeSetEnum(){
+
+        val parser = EMConfig.getOptionParser()
+
+        val opt = parser.recognizedOptions()["aiModelForResponseClassification"] ?:
+        throw Exception("Cannot find option")
+
+        val x = "${AIResponseClassifierModel.DETERMINISTIC},${AIResponseClassifierModel.GAUSSIAN}"
+        val options = parser.parse("--aiModelForResponseClassification", x)
+
+        assertEquals(x, opt.value(options))
+
+        val config = EMConfig()
+        assertTrue("" + config.aiModelForResponseClassification.map { it.name }.sorted().joinToString(",") != x)
+
+        config.updateProperties(options)
+        assertEquals(x, "" + config.aiModelForResponseClassification.map { it.name }.sorted().joinToString(","))
+    }
+
+    @Test
+    fun testDependsOnTrue(){
+
+        val parser = EMConfig.getOptionParser()
+        parser.recognizedOptions()[sqli]
+            ?: throw Exception("Cannot find option")
+
+        val config = EMConfig()
+        //here we simulate a different default
+        config.security = false
+        config.sqli = true // this depends on 'security'
+
+        val noChanges = parser.parse()
+        //should not fail, as we are not touching sqli
+        config.updateProperties(noChanges)
+
+        val optionsFail = parser.parse("--$sqli", "true")
+        assertThrows<ConfigProblemException> { config.updateProperties(optionsFail) }
+
+        val optionsOk = parser.parse("--$sqli", "true", "--security","true")
+        config.updateProperties(optionsOk) // should be OK
+        assertTrue(config.security)
+        assertTrue(config.sqli)
+    }
+
+    @Test
+    fun testDependsOnFalse(){
+
+        val parser = EMConfig.getOptionParser()
+        parser.recognizedOptions()[blackBox]
+            ?: throw Exception("Cannot find option")
+        parser.recognizedOptions()[generateMongoData]
+            ?: throw Exception("Cannot find option")
+
+        val config = EMConfig()
+        //here we simulate a different default
+        config.blackBox = true
+        config.bbSwaggerUrl = "http://localhost:8080"
+
+        val noChanges = parser.parse()
+        //should not fail, as we are not touching 'sutControllerPort'
+        config.updateProperties(noChanges)
+
+        val optionsFail = parser.parse("--$generateMongoData", "true")
+        assertThrows<ConfigProblemException> { config.updateProperties(optionsFail) }
+
+        //issue is that DEFAULT are resolved on first update, and those do have constraints
+        val clean = EMConfig()
+
+        val optionsOk = parser.parse("--$generateMongoData", "true", "--$blackBox","false")
+        clean.updateProperties(optionsOk) // should be OK
+        assertFalse(clean.blackBox)
+        assertTrue(clean.generateMongoData)
+    }
+
 
     @Test
     fun testGetOptionParserBase(){
 
         val options = EMConfig.getOptionParser()
 
-        assertTrue(options.recognizedOptions().containsKey(controllerPortOption))
+        assertTrue(options.recognizedOptions().containsKey(sutControllerPort))
     }
 
 
@@ -32,7 +113,7 @@ internal class EMConfigTest{
 
         val parser = EMConfig.getOptionParser()
 
-        val portOpt = parser.recognizedOptions()[controllerPortOption] ?:
+        val portOpt = parser.recognizedOptions()[sutControllerPort] ?:
                 throw Exception("Cannot find option")
 
         val options = parser.parse()
@@ -45,11 +126,11 @@ internal class EMConfigTest{
 
         val parser = EMConfig.getOptionParser()
 
-        val opt = parser.recognizedOptions()[controllerPortOption] ?:
+        val opt = parser.recognizedOptions()[sutControllerPort] ?:
                 throw Exception("Cannot find option")
 
         val x = "42"
-        val options = parser.parse("--$controllerPortOption", x)
+        val options = parser.parse("--$sutControllerPort", x)
 
         assertEquals(x, opt.value(options))
 
@@ -582,7 +663,7 @@ internal class EMConfigTest{
         val parser = EMConfig.getOptionParser()
         val config = EMConfig()
 
-        val options = parser.parse("--outputFormat", "PYTHON_UNITTEST")
+        val options = parser.parse("--outputFormat", "PYTHON_UNITTEST", "--blackBox", "false")
         assertThrows(Exception::class.java, {config.updateProperties(options)})
     }
 
@@ -604,7 +685,7 @@ internal class EMConfigTest{
 
         config.updateProperties(parser.parse())
 
-        assertEquals(NamingStrategy.ACTION, config.namingStrategy)
+        assertEquals(NamingStrategy.DETERMINISTIC, config.namingStrategy)
     }
 
     @Test
@@ -612,10 +693,10 @@ internal class EMConfigTest{
         val parser = EMConfig.getOptionParser()
         val config = EMConfig()
 
-        val options = parser.parse("--namingStrategy", "ACTION", "--nameWithQueryParameters", "true")
+        val options = parser.parse("--namingStrategy", "DETERMINISTIC", "--nameWithQueryParameters", "true")
         config.updateProperties(options)
 
-        assertEquals(NamingStrategy.ACTION, config.namingStrategy)
+        assertEquals(NamingStrategy.DETERMINISTIC, config.namingStrategy)
         assertTrue(config.nameWithQueryParameters)
     }
 
@@ -624,10 +705,10 @@ internal class EMConfigTest{
         val parser = EMConfig.getOptionParser()
         val config = EMConfig()
 
-        val options = parser.parse("--namingStrategy", "ACTION", "--nameWithQueryParameters", "false")
+        val options = parser.parse("--namingStrategy", "DETERMINISTIC", "--nameWithQueryParameters", "false")
         config.updateProperties(options)
 
-        assertEquals(NamingStrategy.ACTION, config.namingStrategy)
+        assertEquals(NamingStrategy.DETERMINISTIC, config.namingStrategy)
         assertFalse(config.nameWithQueryParameters)
     }
 
@@ -660,4 +741,25 @@ internal class EMConfigTest{
         assertEquals(config.maxTestCaseNameLength, different)
     }
 
+
+    @Test
+    fun testUseEnvVarsForPathInTests(){
+
+        val parser = EMConfig.getOptionParser()
+        parser.recognizedOptions()["useEnvVarsForPathInTests"] ?: throw Exception("Cannot find option")
+
+        val config = EMConfig()
+        val optionAllEmpty = parser.parse("--useEnvVarsForPathInTests", "true")
+        assertThrows(Exception::class.java, {config.updateProperties(optionAllEmpty)})
+
+        val optionOneMissing = parser.parse("--useEnvVarsForPathInTests", "true", "--jdkEnvVarName", "JDK_HOME", "--sutDistEnvVarName", "WFC_HOME")
+        assertThrows(Exception::class.java, {config.updateProperties(optionOneMissing)})
+
+        val optionAllSpecified = parser.parse("--useEnvVarsForPathInTests", "true", "--jdkEnvVarName", "JDK_HOME", "--sutDistEnvVarName", "WFC_HOME", "--sutJarEnvVarName", "sut-jar.jar")
+        assertDoesNotThrow ({config.updateProperties(optionAllSpecified)})
+
+        val optionAllSpecifiedNotRest = parser.parse("--useEnvVarsForPathInTests", "true", "--jdkEnvVarName", "JDK_HOME", "--sutDistEnvVarName", "WFC_HOME", "--sutJarEnvVarName", "sut-jar.jar", "--problemType", "RPC")
+        assertThrows (Exception::class.java,{config.updateProperties(optionAllSpecifiedNotRest)})
+
+    }
 }

@@ -14,6 +14,7 @@ import org.evomaster.client.java.distance.heuristics.Truthness;
 import org.evomaster.client.java.sql.DataRow;
 
 import org.evomaster.client.java.sql.QueryResult;
+import org.evomaster.client.java.sql.heuristic.function.NowFunction;
 import org.evomaster.client.java.sql.internal.SqlParserUtils;
 import org.evomaster.client.java.sql.internal.TaintHandler;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,14 +24,12 @@ import java.sql.Time;
 import java.sql.Timestamp;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.time.LocalDateTime;
-import java.time.OffsetDateTime;
-import java.time.OffsetTime;
-import java.time.ZoneOffset;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -117,29 +116,6 @@ class SqlExpressionEvaluatorTest {
         schema.tables.add(appointmentsTable);
 
     }
-
-    private void assertSqlExpressionEvaluatesToTrue(String sqlCommand, QueryResult queryResult) {
-        Statement parsedSqlCommand = SqlParserUtils.parseSqlCommand(sqlCommand);
-        Select select = (Select) parsedSqlCommand;
-
-
-        TableColumnResolver columnReferenceResolver = new TableColumnResolver(schema);
-        TaintHandler taintHandler = null;
-
-        columnReferenceResolver.enterStatementeContext(select);
-
-        SqlExpressionEvaluator evaluator = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder()
-                .withTableColumnResolver(columnReferenceResolver)
-                .withTaintHandler(taintHandler)
-                .withCurrentDataRow(queryResult.seeRows().get(0)).build();
-
-        select.getPlainSelect().getWhere().accept(evaluator);
-        columnReferenceResolver.exitCurrentStatementContext();
-
-        Truthness truthness = evaluator.getEvaluatedTruthness();
-        assertTrue(truthness.isTrue());
-    }
-
 
     private void assertSqlExpressionEvaluatesToTrue(String sqlCommand, DataRow... row) {
         Statement parsedSqlCommand = SqlParserUtils.parseSqlCommand(sqlCommand);
@@ -1284,7 +1260,7 @@ class SqlExpressionEvaluatorTest {
         String sqlCommand = "SELECT COUNT(*) FROM Employees";
         Statement parsedSqlCommand = SqlParserUtils.parseSqlCommand(sqlCommand);
         PlainSelect plainSelect = (PlainSelect) parsedSqlCommand;
-        SelectItem selectItem = plainSelect.getSelectItems().get(0);
+        SelectItem<?> selectItem = plainSelect.getSelectItems().get(0);
         Expression countExpression = selectItem.getExpression();
 
         QueryResult queryResult = new QueryResult(Collections.singletonList("name"), "Employees");
@@ -1306,7 +1282,7 @@ class SqlExpressionEvaluatorTest {
 
         countExpression.accept(evaluator);
         assertNotNull(evaluator.getEvaluatedValue());
-        assertTrue(evaluator.getEvaluatedValue() instanceof Long);
+        assertInstanceOf(Long.class, evaluator.getEvaluatedValue());
         assertEquals(2L, evaluator.getEvaluatedValue());
     }
 
@@ -1315,7 +1291,7 @@ class SqlExpressionEvaluatorTest {
         String sqlCommand = "SELECT SUM(salary) FROM Employees";
         Statement parsedSqlCommand = SqlParserUtils.parseSqlCommand(sqlCommand);
         PlainSelect plainSelect = (PlainSelect) parsedSqlCommand;
-        SelectItem selectItem = plainSelect.getSelectItems().get(0);
+        SelectItem<?> selectItem = plainSelect.getSelectItems().get(0);
         Expression sumExpression = selectItem.getExpression();
 
         QueryResult queryResult = new QueryResult(Collections.singletonList("salary"), "Employees");
@@ -1340,7 +1316,7 @@ class SqlExpressionEvaluatorTest {
 
         sumExpression.accept(evaluator);
         assertNotNull(evaluator.getEvaluatedValue());
-        assertTrue(evaluator.getEvaluatedValue() instanceof Long);
+        assertInstanceOf(Long.class, evaluator.getEvaluatedValue());
         assertEquals(30_000L, evaluator.getEvaluatedValue());
     }
 
@@ -1349,7 +1325,7 @@ class SqlExpressionEvaluatorTest {
         String sqlCommand = "SELECT AVG(salary) FROM Employees";
         Statement parsedSqlCommand = SqlParserUtils.parseSqlCommand(sqlCommand);
         PlainSelect plainSelect = (PlainSelect) parsedSqlCommand;
-        SelectItem selectItem = plainSelect.getSelectItems().get(0);
+        SelectItem<?> selectItem = plainSelect.getSelectItems().get(0);
         Expression avgExpression = selectItem.getExpression();
 
         QueryResult queryResult = new QueryResult(Collections.singletonList("salary"), "Employees");
@@ -1374,7 +1350,7 @@ class SqlExpressionEvaluatorTest {
 
         avgExpression.accept(evaluator);
         assertNotNull(evaluator.getEvaluatedValue());
-        assertTrue(evaluator.getEvaluatedValue() instanceof Long);
+        assertInstanceOf(Long.class, evaluator.getEvaluatedValue());
         assertEquals(15_000L, evaluator.getEvaluatedValue());
     }
 
@@ -1383,7 +1359,7 @@ class SqlExpressionEvaluatorTest {
         String sqlCommand = "SELECT MAX(salary) FROM Employees";
         Statement parsedSqlCommand = SqlParserUtils.parseSqlCommand(sqlCommand);
         PlainSelect plainSelect = (PlainSelect) parsedSqlCommand;
-        SelectItem selectItem = plainSelect.getSelectItems().get(0);
+        SelectItem<?> selectItem = plainSelect.getSelectItems().get(0);
         Expression maxExpression = selectItem.getExpression();
 
         QueryResult queryResult = new QueryResult(Collections.singletonList("salary"), "Employees");
@@ -1408,7 +1384,7 @@ class SqlExpressionEvaluatorTest {
 
         maxExpression.accept(evaluator);
         assertNotNull(evaluator.getEvaluatedValue());
-        assertTrue(evaluator.getEvaluatedValue() instanceof Integer);
+        assertInstanceOf(Integer.class, evaluator.getEvaluatedValue());
         assertEquals(20_000, evaluator.getEvaluatedValue());
     }
 
@@ -1417,7 +1393,7 @@ class SqlExpressionEvaluatorTest {
         String sqlCommand = "SELECT MIN(salary) FROM Employees";
         Statement parsedSqlCommand = SqlParserUtils.parseSqlCommand(sqlCommand);
         PlainSelect plainSelect = (PlainSelect) parsedSqlCommand;
-        SelectItem selectItem = plainSelect.getSelectItems().get(0);
+        SelectItem<?> selectItem = plainSelect.getSelectItems().get(0);
         Expression minExpression = selectItem.getExpression();
 
         QueryResult queryResult = new QueryResult(Collections.singletonList("salary"), "Employees");
@@ -1442,7 +1418,321 @@ class SqlExpressionEvaluatorTest {
 
         minExpression.accept(evaluator);
         assertNotNull(evaluator.getEvaluatedValue());
-        assertTrue(evaluator.getEvaluatedValue() instanceof Integer);
+        assertInstanceOf(Integer.class, evaluator.getEvaluatedValue());
         assertEquals(10_000, evaluator.getEvaluatedValue());
     }
+
+    @Test
+    public void testCoalesce() {
+        String sql = "COALESCE(null, 'hello', 'world')";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object value = evaluator.getEvaluatedValue();
+        assertEquals("hello", value);
+    }
+
+    @Test
+    public void testCoalesceWithAllNull() {
+        String sql = "COALESCE(null, null, null)";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object value = evaluator.getEvaluatedValue();
+        assertNull(value);
+    }
+
+    @Test
+    public void testCoalesceWithFirstValueNotNull() {
+        String sql = "COALESCE('hello', 'world', null)";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object actualString = evaluator.getEvaluatedValue();
+        assertEquals("hello", actualString);
+    }
+
+    @Test
+    public void testUpper() {
+        String sql = "UPPER('hello')";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object value = evaluator.getEvaluatedValue();
+        assertEquals("HELLO", value);
+    }
+
+    @Test
+    public void testTimeFunction() {
+        String sql = "TIME('2025-01-14 12:30:45')";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object actualTime = evaluator.getEvaluatedValue();
+        final Time exptectedTime = Time.valueOf("12:30:45");
+        assertEquals(exptectedTime.toString(), actualTime.toString());
+    }
+
+    @Test
+    public void testTimestampExpression() {
+        String sql = "TIMESTAMP '2025-01-14 12:30:45'";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object actualTimestamp = evaluator.getEvaluatedValue();
+        assertInstanceOf(Timestamp.class, actualTimestamp);
+        final Timestamp exptectedTimestamp = java.sql.Timestamp.valueOf("2025-01-14 12:30:45");
+        assertEquals(exptectedTimestamp, actualTimestamp);
+    }
+
+    @Test
+    public void testDateExpression() {
+        String sql = "DATE '2025-01-14'";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object actualDate = evaluator.getEvaluatedValue();
+
+        assertInstanceOf(java.sql.Date.class, actualDate);
+
+        final java.sql.Date expectedDate = java.sql.Date.valueOf("2025-01-14");
+        assertEquals(expectedDate, actualDate);
+    }
+
+    @Test
+    public void testTimeExpression() {
+        String sql = "TIME '12:30:45'";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object actualTime = evaluator.getEvaluatedValue();
+
+        assertInstanceOf(Time.class, actualTime);
+
+        final java.sql.Time expectedTime = java.sql.Time.valueOf("12:30:45");
+        assertEquals(expectedTime, actualTime);
+    }
+
+    @Test
+    public void testCoalesceOneExpression() {
+        String sql = "COALESCE('hello')";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object value = evaluator.getEvaluatedValue();
+        assertEquals("hello", value);
+    }
+
+    @Test
+    public void dateTruncDayTruncatesTimestamp() {
+        String sql = "DATE_TRUNC('day', TIMESTAMP '2025-01-14 12:30:45')";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object actual = evaluator.getEvaluatedValue();
+        assertInstanceOf(Date.class, actual);
+        Instant actualInstant = ((java.util.Date) actual).toInstant();
+        Instant expectedInstant = Instant.parse("2025-01-14T00:00:00Z");
+        assertEquals(expectedInstant, actualInstant);
+    }
+
+    @Test
+    public void dateTruncHourTruncatesTimestamp() {
+        String sql = "DATE_TRUNC('hour', TIMESTAMP '2025-01-14 12:30:45')";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object actual = evaluator.getEvaluatedValue();
+        assertInstanceOf(Date.class, actual);
+        Instant actualInstant = ((java.util.Date) actual).toInstant();
+        final Timestamp expected = Timestamp.valueOf("2025-01-14 12:00:00");
+        Instant expectedInstant = expected.toInstant();
+        assertEquals(expectedInstant, actualInstant);
+    }
+
+    @Test
+    public void dateTruncUnknownUnitThrowsIllegalArgumentException() {
+        String sql = "DATE_TRUNC('millennium', TIMESTAMP '2025-01-14 12:30:45')";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        assertThrows(IllegalArgumentException.class, () -> {
+            expression.accept(evaluator);
+            // if evaluation returns something, force get to trigger potential errors
+            evaluator.getEvaluatedValue();
+        });
+    }
+
+    @Test
+    public void testTimestampTzExpression() {
+        String sql = "TIMESTAMPTZ '2025-01-22 15:30:45+02:00'";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object actual = evaluator.getEvaluatedValue();
+
+        assertInstanceOf(OffsetDateTime.class, actual);
+
+        java.time.OffsetDateTime expected =
+                java.time.OffsetDateTime.parse("2025-01-22T15:30:45+02:00");
+
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    public void testNowStableValue() {
+        String sql = "NOW()";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object actual = evaluator.getEvaluatedValue();
+        assertInstanceOf(Timestamp.class, actual);
+        assertEquals(NowFunction.CANONICAL_NOW_VALUE, actual);
+    }
+
+    @Test
+    public void testLower() {
+        String sql = "LOWER('HELLO')";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object value = evaluator.getEvaluatedValue();
+        assertEquals("hello", value);
+    }
+
+    @Test
+    public void testLowerCaseInsensitive() {
+        String sql = "lower('HELLO')";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object value = evaluator.getEvaluatedValue();
+        assertEquals("hello", value);
+    }
+
+    @Test
+    public void testUpperCaseInsensitive() {
+        String sql = "upper('hello')";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object value = evaluator.getEvaluatedValue();
+        assertEquals("HELLO", value);
+    }
+
+    @Test
+    public void testDate() {
+        String sql = "date('2025-01-14 12:00:00')";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object value = evaluator.getEvaluatedValue();
+        assertEquals(java.sql.Date.valueOf("2025-01-14"), value);
+    }
+
+    @Test
+    public void testUUID() {
+        String sql = "'00000000-0000-015f-0000-00000000014e'::uuid";
+        Expression expression = assertDoesNotThrow(() -> CCJSqlParserUtil.parseExpression(sql));
+
+        SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder builder = new SqlExpressionEvaluator.SqlExpressionEvaluatorBuilder();
+        SqlExpressionEvaluator evaluator = builder
+                .withTableColumnResolver(new TableColumnResolver(new DbInfoDto()))
+                .build();
+
+        expression.accept(evaluator);
+        Object actual = evaluator.getEvaluatedValue();
+        UUID expected = UUID.fromString("00000000-0000-015f-0000-00000000014e");
+        assertEquals(expected, actual);
+    }
+
 }

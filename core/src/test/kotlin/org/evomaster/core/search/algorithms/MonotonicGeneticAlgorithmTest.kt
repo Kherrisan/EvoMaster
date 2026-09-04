@@ -8,25 +8,26 @@ import com.netflix.governator.guice.LifecycleInjector
 import org.evomaster.core.BaseModule
 import org.evomaster.core.EMConfig
 import org.evomaster.core.TestUtils
+import org.evomaster.core.search.SearchTestBase
 import org.evomaster.core.search.algorithms.observer.GARecorder
 import org.evomaster.core.search.algorithms.onemax.OneMaxIndividual
 import org.evomaster.core.search.algorithms.onemax.OneMaxModule
 import org.evomaster.core.search.algorithms.onemax.OneMaxSampler
 import org.evomaster.core.search.algorithms.strategy.FixedSelectionStrategy
-import org.evomaster.core.search.service.ExecutionPhaseController
+import org.evomaster.core.search.service.time.ExecutionPhaseController
 import org.evomaster.core.search.service.Randomness
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.BeforeEach
 
-class MonotonicGeneticAlgorithmTest {
+class MonotonicGeneticAlgorithmTest : SearchTestBase(){
 
     private lateinit var injector: Injector
 
     @BeforeEach
     fun setUp() {
         injector = LifecycleInjector.builder()
-            .withModules(* arrayOf<Module>(OneMaxModule(), BaseModule()))
+            .withModules(* arrayOf<Module>(OneMaxModule(), BaseModule(arrayOf("--blackBox","false"))))
             .build().createInjector()
     }
 
@@ -44,15 +45,15 @@ class MonotonicGeneticAlgorithmTest {
             config.stoppingCriterion = EMConfig.StoppingCriterion.ACTION_EVALUATIONS
 
             val epc = injector.getInstance(ExecutionPhaseController::class.java)
-            epc.startSearch()
+            epc.markStartingSearch()
             val solution = monoGA.search()
-            epc.finishSearch()
+            epc.markFinishedSession()
             assertTrue(solution.individuals.size == 1)
             assertEquals(OneMaxSampler.DEFAULT_N.toDouble(), solution.overall.computeFitnessScore(), 0.001)
         }
     }
 
-    
+
     // Tests Edge Case: CrossoverProbability=0 on Monotonic GA
     @Test
     fun testNoCrossoverWhenProbabilityZero_Monotonic() {
@@ -97,7 +98,7 @@ class MonotonicGeneticAlgorithmTest {
             assertEquals(2, rec.mutated.size)
         }
     }
-    
+
     // Tests Edge Case: MutationProbability=0 on Monotonic GA
     @Test
     fun testNoMutationWhenProbabilityZero_Monotonic() {
@@ -118,7 +119,7 @@ class MonotonicGeneticAlgorithmTest {
             config.gaSolutionSource = EMConfig.GASolutionSource.POPULATION
             config.maxEvaluations = 100_000
             config.stoppingCriterion = EMConfig.StoppingCriterion.ACTION_EVALUATIONS
-            
+
             ga.setupBeforeSearch()
 
             val pop = ga.getViewOfPopulation()
@@ -139,7 +140,7 @@ class MonotonicGeneticAlgorithmTest {
             // crossover forced
             assertEquals(1, rec.xoCalls.size)
             // mutation disabled
-            assertEquals(0, rec.mutated.size)           
+            assertEquals(0, rec.mutated.size)
         }
     }
     // Verifies that one generation is formed by elites plus monotonic replacement outcome
@@ -163,7 +164,7 @@ class MonotonicGeneticAlgorithmTest {
             config.gaSolutionSource = EMConfig.GASolutionSource.POPULATION
             config.maxEvaluations = 100_000
             config.stoppingCriterion = EMConfig.StoppingCriterion.ACTION_EVALUATIONS
-            
+
             ga.setupBeforeSearch()
 
             val pop = ga.getViewOfPopulation()
@@ -213,7 +214,7 @@ class MonotonicGeneticAlgorithmTest {
             assertTrue(rec.mutated.any { it === o2 })
         }
     }
-    
+
     // Ensures that maximum fitness never decreases across generations when running full search
     @Test
     fun testMonotonicReplacementRule() {
@@ -232,9 +233,9 @@ class MonotonicGeneticAlgorithmTest {
             config.stoppingCriterion = EMConfig.StoppingCriterion.ACTION_EVALUATIONS
 
             val epc = injector.getInstance(ExecutionPhaseController::class.java)
-            epc.startSearch()
+            epc.markStartingSearch()
             val solution = monoGA.search()
-            epc.finishSearch()
+            epc.markFinishedSession()
             // Check monotonicity across recorded generations: best score (selection metric) is non-decreasing
             val bestScores = rec.bestFitnessPerGeneration
             for (k in 1 until bestScores.size) {
@@ -250,7 +251,7 @@ private fun createMonotonicGAWithSelection(
     fixedSel: FixedSelectionStrategy
 ): Pair<MonotonicGeneticAlgorithm<OneMaxIndividual>, Injector> {
     val injector = LifecycleInjector.builder()
-        .withModules(* arrayOf<Module>(OneMaxModule(), BaseModule()))
+        .withModules(* arrayOf<Module>(OneMaxModule(), BaseModule(arrayOf("--blackBox","false"))))
         .build().createInjector()
 
     val ga = injector.getInstance(

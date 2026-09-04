@@ -10,56 +10,69 @@ import org.evomaster.core.search.service.Randomness
 import org.evomaster.core.search.service.mutator.MutationWeightControl
 import org.evomaster.core.search.service.mutator.genemutation.AdditionalGeneMutationInfo
 import org.evomaster.core.search.service.mutator.genemutation.SubsetGeneMutationSelectionStrategy
+import org.evomaster.core.utils.CharacterRange
+import org.evomaster.core.utils.MultiCharacterRange
+import org.evomaster.core.utils.RegexFlags
 import org.slf4j.LoggerFactory
-import kotlin.math.max
-import kotlin.math.min
-
 
 class CharacterRangeRxGene(
-        val negated: Boolean,
-        ranges: List<Pair<Char,Char>>
+    /**
+     * this represents the valid ranges for a character class, removing overlaps and applying negation
+     */
+    val validRanges: MultiCharacterRange,
+    val flags: RegexFlags
 ) : RxAtom, SimpleGene("."){
+
+    constructor(negated: Boolean, ranges: List<CharacterRange>, flags: RegexFlags = RegexFlags())
+            : this(MultiCharacterRange(negated, ranges), flags)
 
     companion object{
         private val log = LoggerFactory.getLogger(CharacterRangeRxGene::class.java)
-    }
 
-    init {
-        //TODO this will need to be supported
-        if(negated){
-            throw IllegalArgumentException("Negated ranges are not supported yet")
-        }
-
-        if(ranges.isEmpty()){
-            throw IllegalArgumentException("No defined ranges")
-        }
-
-        ranges.forEach {
-            if(it.first.code > it.second.code){
-                LoggingUtil.uniqueWarn(log, "Issue with Regex range, where '${it.first}' is greater than '${it.second}'")
+        private fun Char.swapCase(): Char =
+            if (this.isUpperCase()) {
+                this.lowercaseChar()
+            } else {
+                this.uppercaseChar()
             }
-        }
     }
 
-    var value : Char = ranges[0].first
+    // '\u0000' is a placeholder for the unsatisfiable case (empty MCR with no valid ranges).
+    // This gene will never be randomized or mutated when isUnsatisfiable() is true, as it would be immutable.
+    // getValueAsPrintableString throws when isUnsatisfiable, so that value should be unreachable.
+    var value : Char = if (isUnsatisfiable()) '\u0000' else validRanges[0].start
 
     /**
-     * As inputs might be unsorted, we make sure first <= second
+     * Whether to output the character in uppercase.
+     * Only meaningful when flags.caseInsensitive is true.
      */
-    val ranges = ranges.map { Pair(min(it.first.code,it.second.code).toChar(), max(it.first.code, it.second.code).toChar()) }
+    var useUpperCase: Boolean = false
+
+    override fun isUnsatisfiable(): Boolean = validRanges.isEmpty
 
     override fun checkForLocallyValidIgnoringChildren() : Boolean{
-        //TODO negated
-        return ranges.any { value.code >= it.first.code && value.code <= it.second.code }
+        return validRanges.any {
+            value in it ||
+                    // to check validity we also have to take into account case insensitivity
+                    ( flags.isCaseable(value) &&
+                            ( value.lowercaseChar() in it || value.uppercaseChar() in it )
+                    )
+        }
     }
 
     override fun isMutable(): Boolean {
-        return ranges.size > 1 || ranges[0].let { it.first != it.second }
+        if (isUnsatisfiable()) {
+            return false
+        }
+        // check if there is more than one character or if the character is caseable
+        return validRanges.charCount > 1 || flags.isCaseable(value)
     }
 
     override fun copyContent(): Gene {
-        val copy = CharacterRangeRxGene(negated, ranges)
+        val copy = CharacterRangeRxGene(validRanges, flags)
         copy.value = this.value
+        copy.name = this.name //in case name is changed from its default
+        copy.useUpperCase = this.useUpperCase //copy also the current casing
         return copy
     }
 
@@ -71,22 +84,31 @@ class CharacterRangeRxGene(
     }
 
     override fun randomize(randomness: Randomness, tryToForceNewValue: Boolean) {
-
         /*
-            TODO current is very simple, biased implementation.
-            Should rather have uniform sampling among all valid chars
+        Besides randomizing by sampling from the MultiCharacterRange, we can also randomize the casings for the sampled
+        characters (if applicable), this is needed to allow things like "[abc]" sampling things like "A" when the
+        CASE_INSENSITIVE flag is on, etc.
          */
-        val range = randomness.choose(ranges)
+        val previous = value
+        val previousUpper = useUpperCase
 
-        value = randomness.nextChar(range.first, range.second)
+        value = validRanges.sample(randomness)
+        useUpperCase = if (flags.isCaseable(value)) {
+            randomness.nextBoolean()
+        } else {
+            false
+        }
+
+        if(tryToForceNewValue && previous == value && previousUpper == useUpperCase){
+            randomize(randomness, tryToForceNewValue)
+        }
     }
 
     override fun shallowMutate(randomness: Randomness, apc: AdaptiveParameterControl, mwc: MutationWeightControl, selectionStrategy: SubsetGeneMutationSelectionStrategy, enableAdaptiveGeneMutation: Boolean, additionalGeneMutationInfo: AdditionalGeneMutationInfo?): Boolean {
-
         var t = 0
-        for(i in 0 until ranges.size){
-            val p = ranges[i]
-            if(value >= p.first && value <= p.second){
+        for(i in 0 until validRanges.size){
+            val p = validRanges[i]
+            if(value in p){
                 t = i
                 break
             }
@@ -94,22 +116,30 @@ class CharacterRangeRxGene(
 
         val delta = randomness.choose(listOf(1,-1))
 
-        if(value + delta > ranges[t].second){
+        if(value + delta > validRanges[t].end){
             /*
                 going over current max range. check next range
                 and take its minimum
              */
-            val next = (t+1) % ranges.size
-            value = ranges[next].first
+            val next = (t+1) % validRanges.size
+            value = validRanges[next].start
 
-        } else if(value + delta < ranges[t].first){
+        } else if(value + delta < validRanges[t].start){
 
-            val previous = (t - 1 + ranges.size) % ranges.size
-            value = ranges[previous].second
+            val previous = (t - 1 + validRanges.size) % validRanges.size
+            value = validRanges[previous].end
 
         } else {
             value += delta
         }
+
+        // mutate the case of the character, if applicable
+        useUpperCase = if (flags.isCaseable(value)) {
+            randomness.nextBoolean()
+        } else {
+            false
+        }
+
 
         return true
     }
@@ -119,7 +149,19 @@ class CharacterRangeRxGene(
             TODO should \ be handled specially?
             In any case, would have same handling as AnyCharacterRxGene
          */
-        return value.toString()
+        if (isUnsatisfiable()) {
+            throw IllegalStateException("Cannot get value from empty CharacterRange")
+        }
+        return if (!flags.isCaseable(value)) {
+            value.toString()
+        }
+        // We apply the case selected for each character (for the caseable characters)
+        else if (useUpperCase) {
+            value.uppercaseChar().toString()
+        }
+        else {
+            value.lowercaseChar().toString()
+        }
     }
 
 
@@ -127,7 +169,9 @@ class CharacterRangeRxGene(
         if(other !is CharacterRangeRxGene){
             throw IllegalArgumentException("Invalid gene type ${other.javaClass}")
         }
-        return this.value == other.value
+        // we need to consider casings too, therefore we can just compare the strings using getValueAsPrintableString
+        return getValueAsPrintableString(targetFormat = null) ==
+                other.getValueAsPrintableString(targetFormat = null)
     }
 
     override fun unsafeCopyValueFrom(other: Gene): Boolean {
@@ -136,10 +180,57 @@ class CharacterRangeRxGene(
 
         if(gene is CharacterRangeRxGene){
             value = gene.value
+            useUpperCase = gene.useUpperCase //copy the current casing
             return true
         }
         LoggingUtil.uniqueWarn(log,"cannot bind CharacterClassEscapeRxGene with ${gene::class.java.simpleName}")
 
         return false
+    }
+
+    /**
+     * 1 if [value]'s first character (or its case-swapped counterpart, when caseable) is
+     * within [validRanges], else 0.
+     * @see [RxAbsorbable.absorbableCount]
+     */
+    override fun absorbableCount(value: String): Int {
+        if (value.isEmpty()) {
+            return 0
+        }
+        val c = value[0]
+        if (validRanges.contains(c)) {
+            return 1
+        }
+        if (flags.isCaseable(c) && validRanges.contains(c.swapCase())) {
+            return 1
+        }
+        return 0
+    }
+
+    /**
+     * Always false: a character range always renders exactly one character.
+     * @see [RxAbsorbable.canBeZeroWidth]
+     */
+    override val canBeZeroWidth: Boolean = false
+
+    /**
+     * Forces [value]'s first character onto this gene, swapping case if that's what
+     * matched; mirrors [absorbableCount].
+     * @see [RxAbsorbable.tryForce]
+     */
+    override fun tryForce(value: String): Int {
+        require(value.isNotEmpty())
+        val n = absorbableCount(value)
+        require(n == 0 || n == 1)
+        if (n == 1) {
+            val c = value[0]
+            this.value = if (validRanges.contains(c)) {
+                    c
+                } else {
+                    c.swapCase()
+                }
+            this.useUpperCase = c.isUpperCase()
+        }
+        return n
     }
 }

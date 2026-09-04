@@ -1,11 +1,10 @@
 package org.evomaster.core.output
 
 import org.evomaster.client.java.controller.api.dto.database.schema.DatabaseType
-import org.evomaster.core.EMConfig
-import org.evomaster.core.sql.SqlAction
-import org.evomaster.core.sql.schema.Column
-import org.evomaster.core.sql.schema.ColumnDataType
-import org.evomaster.core.sql.schema.Table
+import org.evomaster.core.database.sql.SqlAction
+import org.evomaster.core.database.sql.schema.Column
+import org.evomaster.core.database.sql.schema.ColumnDataType
+import org.evomaster.core.database.sql.schema.Table
 import org.evomaster.core.output.EvaluatedIndividualBuilder.Companion.buildEvaluatedIndividual
 import org.evomaster.core.output.service.PartialOracles
 import org.evomaster.core.output.service.RestTestCaseWriter
@@ -68,10 +67,10 @@ class WriteXMLTest : WriterTestBase() {
         val table = Table("Table0", setOf(xmlColumn), setOf())
 
 
-        val child0 = ObjectGene("child", listOf())
-        val child1 = ObjectGene("child", listOf())
-        val child2 = ObjectGene("child", listOf())
-        val child3 = ObjectGene("child", listOf())
+        val child0 = ObjectGene("child0", listOf())
+        val child1 = ObjectGene("child1", listOf())
+        val child2 = ObjectGene("child2", listOf())
+        val child3 = ObjectGene("child3", listOf())
         val objectGene = ObjectGene("anElement", listOf(child0, child1, child2, child3))
         val sqlXMLGene = SqlXMLGene("xmlColumn", objectGene)
 
@@ -93,7 +92,7 @@ class WriteXMLTest : WriterTestBase() {
             add("List<InsertionDto> insertions = sql().insertInto(\"Table0\", 0L)")
             indent()
             indent()
-            add(".d(\"xmlColumn\", \"\\\"<anElement><child></child><child></child><child></child><child></child></anElement>\\\"\")")
+            add(".d(\"xmlColumn\", \"\\\"<anElement><child0></child0><child1></child1><child2></child2><child3></child3></anElement>\\\"\")")
             deindent()
             add(".dtos();")
             deindent()
@@ -114,7 +113,7 @@ class WriteXMLTest : WriterTestBase() {
         val table = Table("Table0", setOf(xmlColumn), setOf())
 
 
-        val stringGene = StringGene("stringValue", value = "</element>")
+        val stringGene = StringGene(ObjectGene.contentXMLTag, value = "</element>")
         val objectGene = ObjectGene("anElement", listOf(stringGene))
         val sqlXMLGene = SqlXMLGene("xmlColumn", objectGene)
 

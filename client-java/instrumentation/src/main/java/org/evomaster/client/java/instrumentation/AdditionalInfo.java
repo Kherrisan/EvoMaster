@@ -1,5 +1,6 @@
 package org.evomaster.client.java.instrumentation;
 
+import org.evomaster.client.java.instrumentation.cassandra.CassandraTableMetadata;
 import org.evomaster.client.java.instrumentation.shared.StringSpecializationInfo;
 import org.evomaster.client.java.instrumentation.staticstate.ExecutionTracer;
 import org.evomaster.client.java.utils.SimpleLogger;
@@ -106,11 +107,19 @@ public class AdditionalInfo implements Serializable {
 
     private final Set<MongoFindCommand> mongoFindCommandData = new CopyOnWriteArraySet<>();
 
+    private final Set<ExecutedCqlCommand> executedCqlCommandData = new CopyOnWriteArraySet<>();
+
+    private final Set<Neo4JRunCommand> neo4JRunCommandData = new CopyOnWriteArraySet<>();
+
     private final Set<OpenSearchCommand> openSearchCommandData = new CopyOnWriteArraySet<>();
 
     private final Set<RedisCommand> redisCommandData = new CopyOnWriteArraySet<>();
 
+    private final Set<DynamoDbCommand> dynamoDbInfoData = new CopyOnWriteArraySet<>();
+
     private final Set<MongoCollectionSchema> mongoCollectionSchemaData = new CopyOnWriteArraySet<>();
+
+    private final Set<CassandraTableMetadata> cassandraTableMetadataData = new CopyOnWriteArraySet<>();
 
     public Set<ExecutedSqlCommand> getSqlInfoData(){
         return Collections.unmodifiableSet(executedSqlCommandData);
@@ -118,6 +127,14 @@ public class AdditionalInfo implements Serializable {
 
     public Set<MongoFindCommand> getMongoInfoData(){
         return Collections.unmodifiableSet(mongoFindCommandData);
+    }
+
+    public Set<ExecutedCqlCommand> getCqlInfoData(){
+        return Collections.unmodifiableSet(executedCqlCommandData);
+    }
+
+    public Set<Neo4JRunCommand> getNeo4JInfoData(){
+        return Collections.unmodifiableSet(neo4JRunCommandData);
     }
 
     public Set<OpenSearchCommand> getOpenSearchInfoData() {
@@ -128,8 +145,16 @@ public class AdditionalInfo implements Serializable {
         return Collections.unmodifiableSet(redisCommandData);
     }
 
+    public Set<DynamoDbCommand> getDynamoDbInfoData(){
+        return Collections.unmodifiableSet(dynamoDbInfoData);
+    }
+
     public Set<MongoCollectionSchema> getMongoCollectionTypeData(){
         return Collections.unmodifiableSet(mongoCollectionSchemaData);
+    }
+
+    public Set<CassandraTableMetadata> getCassandraTableMetadataData(){
+        return Collections.unmodifiableSet(cassandraTableMetadataData);
     }
 
     public void addSqlInfo(ExecutedSqlCommand info){
@@ -140,6 +165,14 @@ public class AdditionalInfo implements Serializable {
         mongoFindCommandData.add(info);
     }
 
+    public void addCqlInfo(ExecutedCqlCommand info){
+        executedCqlCommandData.add(info);
+    }
+
+    public void addNeo4JInfo(Neo4JRunCommand info){
+        neo4JRunCommandData.add(info);
+    }
+
     public void addOpenSearchInfo(OpenSearchCommand info){
         openSearchCommandData.add(info);
     }
@@ -148,8 +181,16 @@ public class AdditionalInfo implements Serializable {
         redisCommandData.add(info);
     }
 
+    public void addDynamoDbInfo(DynamoDbCommand info){
+        dynamoDbInfoData.add(info);
+    }
+
     public void addMongoCollectionType(MongoCollectionSchema mongoCollectionSchema){
         mongoCollectionSchemaData.add(mongoCollectionSchema);
+    }
+
+    public void addCassandraTableMetadata(CassandraTableMetadata cassandraTableMetadata){
+        cassandraTableMetadataData.add(cassandraTableMetadata);
     }
 
     public Set<String> getParsedDtoNamesView(){
@@ -170,7 +211,10 @@ public class AdditionalInfo implements Serializable {
 
     public void addSpecialization(String taintInputName, StringSpecializationInfo info){
         if(!ExecutionTracer.getTaintType(taintInputName).isTainted()){
-            throw new IllegalArgumentException("No valid input name: " + taintInputName);
+            //this can happen in E2E where libraries used by "core" are instrumented (eg Kotlin)
+            SimpleLogger.error("No valid taint input name for specialization: " + taintInputName);
+            //throw new IllegalArgumentException();
+            return;
         }
         Objects.requireNonNull(info);
 

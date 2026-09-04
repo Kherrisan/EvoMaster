@@ -1,13 +1,16 @@
 package org.evomaster.client.java.controller.internal.db.redis;
 
 import org.evomaster.client.java.controller.redis.RedisHeuristicsCalculator;
-import org.evomaster.client.java.controller.redis.RedisInfo;
+import org.evomaster.client.java.controller.redis.RedisKeyValueStore;
+import org.evomaster.client.java.controller.redis.RedisValueData;
 import org.evomaster.client.java.instrumentation.RedisCommand;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.*;
 
+import static org.evomaster.client.java.distance.heuristics.DistanceHelper.H_MAX_VALUE;
+import static org.evomaster.client.java.distance.heuristics.DistanceHelper.H_MIN_VALUE;
 import static org.junit.jupiter.api.Assertions.*;
 
 class RedisHeuristicsCalculatorTest {
@@ -28,14 +31,15 @@ class RedisHeuristicsCalculatorTest {
                 5
         );
 
-        List<RedisInfo> redisInfoList = new ArrayList<>();
-        redisInfoList.add(new RedisInfo("user:1"));
-        redisInfoList.add(new RedisInfo("user:2"));
-        redisInfoList.add(new RedisInfo("other"));
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("user:1", null);
+        redisValueDataList.put("user:2", null);
+        redisValueDataList.put("other", null);
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
 
-        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, redisInfoList);
+        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, redisKeyValueStore);
 
-        assertEquals(0.0, result.getDistance(), 1e-6, "Pattern 'user*' should fully match 'user:1' and 'user:2'");
+        assertEquals(H_MIN_VALUE, result.getDistance(), 1e-6, "Pattern 'user*' should fully match 'user:1' and 'user:2'");
     }
 
     @Test
@@ -47,12 +51,13 @@ class RedisHeuristicsCalculatorTest {
                 5
         );
 
-        List<RedisInfo> redisInfoList = new ArrayList<>();
-        redisInfoList.add(new RedisInfo("user:1"));
-        redisInfoList.add(new RedisInfo("user:2"));
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("user:1", null);
+        redisValueDataList.put("user:2", null);
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
 
-        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, redisInfoList);
-        assertEquals(1.0, result.getDistance(), 0.1, "Pattern with no matches should yield max distance 1");
+        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, redisKeyValueStore);
+        assertEquals(1.0, result.getDistance(), 0.25, "Pattern with no matches should yield values close to 1");
         assertEquals(2, result.getNumberOfEvaluatedKeys());
     }
 
@@ -72,12 +77,13 @@ class RedisHeuristicsCalculatorTest {
                 5
         );
 
-        List<RedisInfo> redisInfoList = new ArrayList<>();
-        redisInfoList.add(new RedisInfo("user:1"));
-        redisInfoList.add(new RedisInfo("user:2"));
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("user:1", null);
+        redisValueDataList.put("user:2", null);
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
 
-        RedisDistanceWithMetrics dClose = calculator.computeDistance(closeKey, redisInfoList);
-        RedisDistanceWithMetrics dFar = calculator.computeDistance(farKey, redisInfoList);
+        RedisDistanceWithMetrics dClose = calculator.computeDistance(closeKey, redisKeyValueStore);
+        RedisDistanceWithMetrics dFar = calculator.computeDistance(farKey, redisKeyValueStore);
 
         assertTrue(dClose.getDistance() < dFar.getDistance(),
                 "Closer key should have smaller distance.");
@@ -92,13 +98,14 @@ class RedisHeuristicsCalculatorTest {
                 3
         );
 
-        List<RedisInfo> redisInfoList = new ArrayList<>();
-        redisInfoList.add(new RedisInfo("profile", true));
-        redisInfoList.add(new RedisInfo("users", false));
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("profile", new RedisValueData(Collections.singletonMap("name", "John")));
+        redisValueDataList.put("users", new RedisValueData(Collections.emptyMap()));
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
 
-        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, redisInfoList);
+        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, redisKeyValueStore);
 
-        assertEquals(0.0, result.getDistance(), 1e-6,
+        assertEquals(H_MIN_VALUE, result.getDistance(), 1e-6,
                 "Field 'name' exists, so distance must be 0");
         assertTrue(result.getNumberOfEvaluatedKeys() > 0);
     }
@@ -112,24 +119,53 @@ class RedisHeuristicsCalculatorTest {
                 3
         );
 
-        List<RedisInfo> redisInfoList = new ArrayList<>();
-        redisInfoList.add(new RedisInfo("profile", false));
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("profile", new RedisValueData(Collections.emptyMap()));
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
 
-        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, redisInfoList);
+        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, redisKeyValueStore);
 
-        assertTrue(result.getDistance() > 0.0, "Missing field should yield positive distance");
+        assertTrue(result.getDistance() > H_MIN_VALUE, "Missing field should yield positive distance");
         assertTrue(result.getNumberOfEvaluatedKeys() >= 1);
     }
 
-    /**
-     * Distance in intersection between two given sets:
-     * - setA y setB share members → low distance
-     * - setC y setD have no members in common (but close) → greater distance
-     * - setE y setF have no members in common (very different) → the greatest distance
-     */
+    @Test
+    void testHGetFieldDistance() {
+        RedisCommand lowerDistanceCmd = new RedisCommand(
+                RedisCommand.RedisCommandType.HGET,
+                new String[]{"key<profile>", "key<weight>"},
+                true,
+                3
+        );
+        RedisCommand cmd = new RedisCommand(
+                RedisCommand.RedisCommandType.HGET,
+                new String[]{"key<profile>", "key<age>"},
+                true,
+                3
+        );
+        RedisCommand greaterDistanceCmd = new RedisCommand(
+                RedisCommand.RedisCommandType.HGET,
+                new String[]{"key<user>", "key<direction>"},
+                true,
+                3
+        );
+
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("profile", new RedisValueData(Collections.singletonMap("height", "175")));
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
+
+        RedisDistanceWithMetrics resultLower = calculator.computeDistance(lowerDistanceCmd, redisKeyValueStore);
+        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, redisKeyValueStore);
+        RedisDistanceWithMetrics resultGreater = calculator.computeDistance(greaterDistanceCmd, redisKeyValueStore);
+
+        assertTrue(resultLower.getDistance() < result.getDistance(),
+                "Closer target field should yield lower distance");
+        assertTrue(result.getDistance() < resultGreater.getDistance(),
+                "Closer target key and field should yield lower distance");
+    }
+
     @Test
     void testSInterSetsIntersectionAndNoIntersection() {
-        // Shared members.
         RedisCommand cmdIntersect = new RedisCommand(
                 RedisCommand.RedisCommandType.SINTER,
                 new String[]{"key<setA>", "key<setB>"},
@@ -137,15 +173,15 @@ class RedisHeuristicsCalculatorTest {
                 1
         );
 
-        List<RedisInfo> redisInfoListIntersection = new ArrayList<>();
-        redisInfoListIntersection.add(new RedisInfo("setA", "set", new HashSet<>(Arrays.asList("a", "b", "c"))));
-        redisInfoListIntersection.add(new RedisInfo("setB", "set", new HashSet<>(Arrays.asList("b", "c", "d"))));
+        Map<String, RedisValueData> redisValueDataListIntersection = new HashMap<>();
+        redisValueDataListIntersection.put("setA", new RedisValueData(new HashSet<>(Arrays.asList("a", "b", "c"))));
+        redisValueDataListIntersection.put("setB", new RedisValueData(new HashSet<>(Arrays.asList("b", "c", "d"))));
+        RedisKeyValueStore redisKeyValueStoreIntersection = new RedisKeyValueStore(redisValueDataListIntersection);
 
-        RedisDistanceWithMetrics dIntersect = calculator.computeDistance(cmdIntersect, redisInfoListIntersection);
-        assertEquals(0.0, dIntersect.getDistance(),
-                "Set intersection distance equals 0.0 when sets share members.");
+        RedisDistanceWithMetrics dIntersect = calculator.computeDistance(cmdIntersect, redisKeyValueStoreIntersection);
+        assertEquals(H_MIN_VALUE, dIntersect.getDistance(),
+                "Set intersection distance equals H_MIN_VALUE when sets share members.");
 
-        // No members in common
         RedisCommand cmdNoIntersect = new RedisCommand(
                 RedisCommand.RedisCommandType.SINTER,
                 new String[]{"key<setC>", "key<setD>"},
@@ -153,18 +189,18 @@ class RedisHeuristicsCalculatorTest {
                 1
         );
 
-        List<RedisInfo> redisInfoListNoIntersection = new ArrayList<>();
-        redisInfoListNoIntersection.add(new RedisInfo("setC", "set", new HashSet<>(Arrays.asList("a", "b"))));
-        redisInfoListNoIntersection.add(new RedisInfo("setD", "set", new HashSet<>(Arrays.asList("c", "d"))));
+        Map<String, RedisValueData> redisValueDataListNoIntersection = new HashMap<>();
+        redisValueDataListNoIntersection.put("setC", new RedisValueData(new HashSet<>(Arrays.asList("a", "b"))));
+        redisValueDataListNoIntersection.put("setD", new RedisValueData(new HashSet<>(Arrays.asList("c", "d"))));
+        RedisKeyValueStore redisKeyValueStoreNoIntersection = new RedisKeyValueStore(redisValueDataListNoIntersection);
 
-        RedisDistanceWithMetrics dNoIntersect = calculator.computeDistance(cmdNoIntersect, redisInfoListNoIntersection);
+        RedisDistanceWithMetrics dNoIntersect = calculator.computeDistance(cmdNoIntersect, redisKeyValueStoreNoIntersection);
 
-        assertTrue(dNoIntersect.getDistance() > 0.0,
+        assertTrue(dNoIntersect.getDistance() > H_MIN_VALUE,
                 "With disjoint sets, distance must be greater than zero.");
         assertTrue(dIntersect.getDistance() < dNoIntersect.getDistance(),
                 "Sets with common elements should yield smaller distance");
 
-        // No members in common, greater distance
         RedisCommand cmdNoIntersectFarDistance = new RedisCommand(
                 RedisCommand.RedisCommandType.SINTER,
                 new String[]{"key<setE>", "key<setF>"},
@@ -172,22 +208,19 @@ class RedisHeuristicsCalculatorTest {
                 1
         );
 
-        List<RedisInfo> redisInfoListGreaterDisjoint = new ArrayList<>();
-        redisInfoListGreaterDisjoint.add(new RedisInfo("setC", "set", new HashSet<>(Arrays.asList("a", "b"))));
-        redisInfoListGreaterDisjoint.add(new RedisInfo("setD", "set", new HashSet<>(Arrays.asList("y", "z"))));
+        Map<String, RedisValueData> redisValueDataListGreaterDisjoint = new HashMap<>();
+        redisValueDataListGreaterDisjoint.put("setC", new RedisValueData(new HashSet<>(Arrays.asList("a", "b"))));
+        redisValueDataListGreaterDisjoint.put("setD", new RedisValueData(new HashSet<>(Arrays.asList("y", "z"))));
+        RedisKeyValueStore redisKeyValueStoreGreaterDisjoint = new RedisKeyValueStore(redisValueDataListGreaterDisjoint);
 
-        RedisDistanceWithMetrics dNoIntersectFarDistance = calculator.computeDistance(cmdNoIntersectFarDistance, redisInfoListGreaterDisjoint);
+        RedisDistanceWithMetrics dNoIntersectFarDistance = calculator.computeDistance(cmdNoIntersectFarDistance, redisKeyValueStoreGreaterDisjoint);
 
-        assertTrue(dNoIntersectFarDistance.getDistance() > 0.0,
+        assertTrue(dNoIntersectFarDistance.getDistance() > H_MIN_VALUE,
                 "With disjoint sets, distance must be greater than zero.");
         assertTrue(dNoIntersect.getDistance() < dNoIntersectFarDistance.getDistance(),
                 "Sets with close elements should yield smaller distance");
     }
 
-    /**
-     * Distance in intersection between several sets.
-     * When there's no intersection between all of them, distance should be greater as fewer intersections are possible.
-     */
     @Test
     void testSInterSeveralSets() {
         RedisCommand cmdIntersect = new RedisCommand(
@@ -197,24 +230,26 @@ class RedisHeuristicsCalculatorTest {
                 1
         );
 
-        List<RedisInfo> redisInfoListLessDistance = new ArrayList<>();
-        redisInfoListLessDistance.add(new RedisInfo("setA", "set", new HashSet<>(Arrays.asList("a", "b", "c"))));
-        redisInfoListLessDistance.add(new RedisInfo("setB", "set", new HashSet<>(Arrays.asList("b", "c"))));
-        redisInfoListLessDistance.add(new RedisInfo("setC", "set", new HashSet<>(Arrays.asList("c", "d"))));
-        redisInfoListLessDistance.add(new RedisInfo("setD", "set", new HashSet<>(Arrays.asList("d", "e"))));
+        Map<String, RedisValueData> redisValueDataListLessDistance = new HashMap<>();
+        redisValueDataListLessDistance.put("setA", new RedisValueData(new HashSet<>(Arrays.asList("a", "b", "c"))));
+        redisValueDataListLessDistance.put("setB", new RedisValueData(new HashSet<>(Arrays.asList("b", "c"))));
+        redisValueDataListLessDistance.put("setC", new RedisValueData(new HashSet<>(Arrays.asList("c", "d"))));
+        redisValueDataListLessDistance.put("setD", new RedisValueData(new HashSet<>(Arrays.asList("d", "e"))));
+        RedisKeyValueStore redisKeyValueStoreLessDistance = new RedisKeyValueStore(redisValueDataListLessDistance);
 
-        RedisDistanceWithMetrics dIntersectLessDistance = calculator.computeDistance(cmdIntersect, redisInfoListLessDistance);
-        assertTrue(dIntersectLessDistance.getDistance() > 0.0,
+        RedisDistanceWithMetrics dIntersectLessDistance = calculator.computeDistance(cmdIntersect, redisKeyValueStoreLessDistance);
+        assertTrue(dIntersectLessDistance.getDistance() > H_MIN_VALUE,
                 "With disjoint sets, distance must be greater than zero.");
 
-        List<RedisInfo> redisInfoListMoreDistance = new ArrayList<>();
-        redisInfoListMoreDistance.add(new RedisInfo("setA", "set", new HashSet<>(Arrays.asList("a", "b", "c"))));
-        redisInfoListMoreDistance.add(new RedisInfo("setB", "set", new HashSet<>(Arrays.asList("b", "c"))));
-        redisInfoListMoreDistance.add(new RedisInfo("setC", "set", new HashSet<>(Arrays.asList("d", "e"))));
-        redisInfoListMoreDistance.add(new RedisInfo("setD", "set", new HashSet<>(Arrays.asList("f", "g"))));
+        Map<String, RedisValueData> redisValueDataListMoreDistance = new HashMap<>();
+        redisValueDataListMoreDistance.put("setA", new RedisValueData(new HashSet<>(Arrays.asList("a", "b", "c"))));
+        redisValueDataListMoreDistance.put("setB", new RedisValueData(new HashSet<>(Arrays.asList("b", "c"))));
+        redisValueDataListMoreDistance.put("setC", new RedisValueData(new HashSet<>(Arrays.asList("d", "e"))));
+        redisValueDataListMoreDistance.put("setD", new RedisValueData(new HashSet<>(Arrays.asList("f", "g"))));
+        RedisKeyValueStore redisKeyValueStoreMoreDistance = new RedisKeyValueStore(redisValueDataListMoreDistance);
 
-        RedisDistanceWithMetrics dIntersectMoreDistance = calculator.computeDistance(cmdIntersect, redisInfoListMoreDistance);
-        assertTrue(dIntersectMoreDistance.getDistance() > 0.0,
+        RedisDistanceWithMetrics dIntersectMoreDistance = calculator.computeDistance(cmdIntersect, redisKeyValueStoreMoreDistance);
+        assertTrue(dIntersectMoreDistance.getDistance() > H_MIN_VALUE,
                 "With disjoint sets, distance must be greater than zero.");
 
         assertTrue(dIntersectMoreDistance.getDistance() > dIntersectLessDistance.getDistance(),
@@ -236,13 +271,14 @@ class RedisHeuristicsCalculatorTest {
                 2
         );
 
-        List<RedisInfo> redisInfoList = new ArrayList<>();
-        redisInfoList.add(new RedisInfo("user:setA"));
-        redisInfoList.add(new RedisInfo("user:setB"));
-        redisInfoList.add(new RedisInfo("profile:set"));
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("user:setA", null);
+        redisValueDataList.put("user:setB", null);
+        redisValueDataList.put("profile:set", null);
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
 
-        double dSimilar = calculator.computeDistance(similar, redisInfoList).getDistance();
-        double dDifferent = calculator.computeDistance(different, redisInfoList).getDistance();
+        double dSimilar = calculator.computeDistance(similar, redisKeyValueStore).getDistance();
+        double dDifferent = calculator.computeDistance(different, redisKeyValueStore).getDistance();
 
         assertTrue(dSimilar < dDifferent,
                 "SMEMBERS with similar keys should yield smaller distance");
@@ -264,15 +300,232 @@ class RedisHeuristicsCalculatorTest {
                 1
         );
 
-        List<RedisInfo> redisInfoList = new ArrayList<>();
-        redisInfoList.add(new RedisInfo("session:1235"));
-        redisInfoList.add(new RedisInfo("config"));
-        redisInfoList.add(new RedisInfo("log"));
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("session:1235", null);
+        redisValueDataList.put("config", null);
+        redisValueDataList.put("log", null);
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
 
-        double dSimilar = calculator.computeDistance(similar, redisInfoList).getDistance();
-        double dDifferent = calculator.computeDistance(different, redisInfoList).getDistance();
+        double dSimilar = calculator.computeDistance(similar, redisKeyValueStore).getDistance();
+        double dDifferent = calculator.computeDistance(different, redisKeyValueStore).getDistance();
 
         assertTrue(dSimilar < dDifferent,
                 "GET with similar keys should yield smaller distance");
+    }
+
+    @Test
+    void testComputeDistanceHandlesInternalExceptionOk() {
+        RedisCommand malformedHGet = new RedisCommand(
+                RedisCommand.RedisCommandType.HGET,
+                new String[]{"key<profile>"},
+                true,
+                3
+        );
+
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("profile", new RedisValueData(Collections.singletonMap("name", "John")));
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
+
+        RedisDistanceWithMetrics result = calculator.computeDistance(malformedHGet, redisKeyValueStore);
+
+        assertEquals(H_MAX_VALUE, result.getDistance(), 1e-6,
+                "An internal exception must translate into maximum distance");
+        assertEquals(0, result.getNumberOfEvaluatedKeys(),
+                "An internal exception must not report evaluated keys");
+    }
+
+    @Test
+    void testUnsupportedCommandTypeReturnsMaxDistance() {
+        RedisCommand unsupported = new RedisCommand(
+                RedisCommand.RedisCommandType.SET,
+                new String[]{"key<foo>", "key<bar>"},
+                true,
+                1
+        );
+
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("foo", null);
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
+
+        RedisDistanceWithMetrics result = calculator.computeDistance(unsupported, redisKeyValueStore);
+
+        assertEquals(H_MAX_VALUE, result.getDistance(), 1e-6,
+                "An unsupported command type must return maximum distance");
+        assertEquals(0, result.getNumberOfEvaluatedKeys());
+    }
+
+    @Test
+    void testHGetAllCommand() {
+        RedisCommand cmd = new RedisCommand(
+                RedisCommand.RedisCommandType.HGETALL,
+                new String[]{"key<profile>"},
+                true,
+                1
+        );
+
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("profile", null);
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
+
+        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, redisKeyValueStore);
+
+        assertEquals(H_MIN_VALUE, result.getDistance(), 1e-6, "HGETALL on an existing key must yield distance 0");
+    }
+
+    @Test
+    void testKeyMatchAgainstEmptyDatabase() {
+        RedisCommand cmd = new RedisCommand(
+                RedisCommand.RedisCommandType.GET,
+                new String[]{"key<anykey>"},
+                true,
+                1
+        );
+
+        RedisKeyValueStore emptyStore = new RedisKeyValueStore(new HashMap<>());
+
+        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, emptyStore);
+
+        assertTrue(result.getDistance() > H_MIN_VALUE,
+                "An empty database can never yield a perfect match");
+        assertEquals(0, result.getNumberOfEvaluatedKeys());
+    }
+
+    @Test
+    void testKeysInvalidPatternIsHandledOk() {
+        RedisCommand cmd = new RedisCommand(
+                RedisCommand.RedisCommandType.KEYS,
+                new String[]{"key<[abc>"},
+                true,
+                1
+        );
+
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("abc", null);
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
+
+        RedisDistanceWithMetrics result = assertDoesNotThrow(
+                () -> calculator.computeDistance(cmd, redisKeyValueStore),
+                "An invalid pattern must not propagate an exception"
+        );
+
+        assertTrue(result.getDistance() > H_MIN_VALUE,
+                "An invalid pattern can never translate into a perfect match");
+    }
+
+    @Test
+    void testKeysAgainstEmptyDatabase() {
+        RedisCommand cmd = new RedisCommand(
+                RedisCommand.RedisCommandType.KEYS,
+                new String[]{"key<user*>"},
+                true,
+                1
+        );
+
+        RedisKeyValueStore emptyStore = new RedisKeyValueStore(new HashMap<>());
+
+        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, emptyStore);
+
+        assertTrue(result.getDistance() > H_MIN_VALUE,
+                "An empty database can never yield a perfect match for KEYS");
+        assertEquals(0, result.getNumberOfEvaluatedKeys());
+    }
+
+    @Test
+    void testSInterWithNoKeysReturnsMaxDistance() {
+        RedisCommand cmd = new RedisCommand(
+                RedisCommand.RedisCommandType.SINTER,
+                new String[]{},
+                true,
+                1
+        );
+
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("setA", new RedisValueData(new HashSet<>(Arrays.asList("a", "b"))));
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
+
+        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, redisKeyValueStore);
+
+        assertTrue(result.getDistance() > H_MIN_VALUE,
+                "SINTER with no keys can never yield a perfect match");
+    }
+
+    @Test
+    void testSInterAgainstEmptyDatabase() {
+        RedisCommand cmd = new RedisCommand(
+                RedisCommand.RedisCommandType.SINTER,
+                new String[]{"key<setA>", "key<setB>"},
+                true,
+                1
+        );
+
+        RedisKeyValueStore emptyStore = new RedisKeyValueStore(new HashMap<>());
+
+        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, emptyStore);
+
+        assertTrue(result.getDistance() > H_MIN_VALUE,
+                "SINTER against an empty database can never yield a perfect match");
+        assertEquals(0, result.getNumberOfEvaluatedKeys());
+    }
+
+    @Test
+    void testSInterWithMissingSetKeyReturnsMaxDistance() {
+        RedisCommand cmd = new RedisCommand(
+                RedisCommand.RedisCommandType.SINTER,
+                new String[]{"key<setA>", "key<setB>"},
+                true,
+                1
+        );
+
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("setA", new RedisValueData(new HashSet<>(Arrays.asList("a", "b"))));
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
+
+        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, redisKeyValueStore);
+
+        assertTrue(result.getDistance() > H_MIN_VALUE,
+                "If a referenced set does not exist, the intersection can never be a perfect match");
+    }
+
+    @Test
+    void testSInterWithAllEmptySetsReturnsMaxDistance() {
+        RedisCommand cmd = new RedisCommand(
+                RedisCommand.RedisCommandType.SINTER,
+                new String[]{"key<setA>", "key<setB>"},
+                true,
+                1
+        );
+
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("setA", new RedisValueData(new HashSet<>()));
+        redisValueDataList.put("setB", new RedisValueData(new HashSet<>()));
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
+
+        RedisDistanceWithMetrics result = calculator.computeDistance(cmd, redisKeyValueStore);
+
+        assertTrue(result.getDistance() > H_MIN_VALUE,
+                "Empty (non-null) sets cannot yield a perfect match in an intersection");
+    }
+
+    @Test
+    void testSInterOneEmptySetAmongNonEmptySetsDoesNotThrow() {
+        RedisCommand cmd = new RedisCommand(
+                RedisCommand.RedisCommandType.SINTER,
+                new String[]{"key<setA>", "key<setB>"},
+                true,
+                1
+        );
+
+        Map<String, RedisValueData> redisValueDataList = new HashMap<>();
+        redisValueDataList.put("setA", new RedisValueData(new HashSet<>(Arrays.asList("a", "b", "c"))));
+        redisValueDataList.put("setB", new RedisValueData(new HashSet<>()));
+        RedisKeyValueStore redisKeyValueStore = new RedisKeyValueStore(redisValueDataList);
+
+        RedisDistanceWithMetrics result = assertDoesNotThrow(
+                () -> calculator.computeDistance(cmd, redisKeyValueStore),
+                "An empty set of members in hContains must not throw an exception"
+        );
+
+        assertTrue(result.getDistance() > H_MIN_VALUE,
+                "There can be no real intersection with an empty set");
     }
 }

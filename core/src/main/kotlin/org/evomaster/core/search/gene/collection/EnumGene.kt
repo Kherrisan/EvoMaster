@@ -3,12 +3,11 @@ package org.evomaster.core.search.gene.collection
 import org.evomaster.core.output.OutputFormat
 import org.evomaster.core.search.gene.BooleanGene
 import org.evomaster.core.search.gene.Gene
-import org.evomaster.core.search.gene.interfaces.NamedExamplesGene
+import org.evomaster.core.search.gene.interfaces.UserExamplesGene
 import org.evomaster.core.search.gene.numeric.DoubleGene
 import org.evomaster.core.search.gene.numeric.FloatGene
 import org.evomaster.core.search.gene.numeric.IntegerGene
 import org.evomaster.core.search.gene.numeric.LongGene
-import org.evomaster.core.search.gene.string.StringGene
 import org.evomaster.core.search.gene.root.SimpleGene
 import org.evomaster.core.search.gene.utils.GeneUtils
 import org.evomaster.core.search.gene.wrapper.ChoiceGene
@@ -37,13 +36,13 @@ class EnumGene<T : Comparable<T>>(
      * to avoid specifying exact types. Still, should not be printed out as string.
      * Recall that an enum is just a group of constants that cannot be mutated
      */
-    private val treatAsNotString : Boolean = false,
+    val treatAsNotString : Boolean = false,
     /**
      * An optional list of 'names' for each/some of the values in this enumeration.
      * This is usually just extra information, eg, to recognize named "examples" in OpenAPI schemas
      */
-    private val valueNames: List<String?>? = null
-) : SimpleGene(name), NamedExamplesGene {
+    val valueNames: List<String?>? = null
+) : SimpleGene(name), UserExamplesGene {
 
     companion object {
 
@@ -56,6 +55,14 @@ class EnumGene<T : Comparable<T>>(
 
         private val log: Logger = LoggerFactory.getLogger(EnumGene::class.java)
 
+        /**
+         * This was potential issue in IT where we parse thousands of specs...
+         */
+        fun cleanCache(){
+            synchronized(cache){
+                cache.clear()
+            }
+        }
     }
 
     val values: List<T>
@@ -71,11 +78,27 @@ class EnumGene<T : Comparable<T>>(
             log.warn("Enum Gene (name: $name) has empty list of values")
             values = listOf()
         }else{
-            val list = data
-                .toSet() // we want no duplicate
+
+            val elements = if(valueNames == null){
+                // we want no duplicate
+                data.toSet()
+            } else {
+                //if we have named value, then we must not use a set, as there might be duplicates, and
+                //we would need to know which names map to which duplicated value
+                data
+            }
+
+            val list = elements
                 .toList() // need ordering to specify index of selection, so Set would not do
-                .sorted() // sort, to make meaningful list comparisons
                 .map { if (it is String) it.intern() as T else it } //if strings, make sure to intern them
+                .run {
+                    if(valueNames == null){
+                        sorted() // sort, to make meaningful list comparisons, but only if examples are not named.
+                                 // otherwise we lose vector alignment
+                    } else {
+                        this
+                    }
+                }
 
             /*
                we need to make sure that, if we are adding a list that has content equal to
@@ -84,6 +107,20 @@ class EnumGene<T : Comparable<T>>(
             synchronized(cache) {
                 values = if (cache.contains(list)) {
                     cache.find { it == list }!! as List<T> // equality based on content, not reference
+                    /*
+                        What a tricky bug!!!
+                        the following was a major performance issue...
+                        it might sounds weird, as code above makes 2 calls: contains() and find{}
+                        The point is that contains() is O(1), whereas find{} is O(n).
+                        When we have hundreds/thousands of tests, and cache is not reset, most of the access
+                        here would be a miss, and not a hit... so we would do always a linear scan on a
+                        ever increasing cache... this bug alone did add nearly 1 hour to the build!!!
+                        ideally, we should do a cleanCache() on each test... but we do not have a common
+                        testBase in core as we do for E2E...
+                     */
+//                val x = cache.find { it == list }
+//                values = if (x != null) {
+//                    x as List<T>
                 } else {
                     cache.add(list)
                     list
@@ -188,7 +225,10 @@ class EnumGene<T : Comparable<T>>(
     override fun getValueAsPrintableString(previousGenes: List<Gene>, mode: GeneUtils.EscapeMode?, targetFormat: OutputFormat?, extraCheck: Boolean): String {
 
         val res = values[index]
-        if (res is String && !treatAsNotString) {
+        // In XML mode, enum string values are emitted as tag text content (e.g. <path>VALUE</path>).
+        // Unlike JSON, XML does not use quotes to delimit string values — the tags are the delimiters.
+        // Adding quotes here would include them as literal characters in the XML output.
+        if (res is String && !treatAsNotString && mode != GeneUtils.EscapeMode.XML) {
             return "\"$res\""
         } else {
             return res.toString()
@@ -201,6 +241,21 @@ class EnumGene<T : Comparable<T>>(
 
     override fun getValueName(): String?{
         return valueNames?.get(index)
+    }
+
+    override fun getAvailableExampleNames() : Set<String> {
+        return valueNames?.mapNotNull { it }?.toSet() ?: setOf()
+    }
+
+    override fun selectExampleByName(name: String) {
+        if(!isUsedForExamples()){
+            throw IllegalStateException("Selected enum does not contain example values")
+        }
+        if(valueNames == null || ! valueNames.contains(name)){
+            throw IllegalArgumentException("Selected example value enum does not contain $name")
+        }
+
+        index = valueNames.indexOf(name)
     }
 
     /**
@@ -237,7 +292,8 @@ class EnumGene<T : Comparable<T>>(
 
     override fun containsSameValueAs(other: Gene): Boolean {
         if (other !is EnumGene<*>) {
-            throw IllegalArgumentException("Invalid gene type ${other.javaClass}")
+            return false // FIXME
+            //throw IllegalArgumentException("Invalid gene type ${other.javaClass}")
         }
         //FIXME what if compared to another enum with different values???
         return this.index == other.index

@@ -3,18 +3,21 @@ package org.evomaster.core.output
 import org.evomaster.client.java.controller.api.dto.database.schema.DatabaseType
 import org.evomaster.core.EMConfig
 import org.evomaster.core.TestUtils
-import org.evomaster.core.sql.SqlAction
-import org.evomaster.core.sql.SqlActionGeneBuilder
-import org.evomaster.core.sql.SqlActionResult
-import org.evomaster.core.sql.schema.Column
-import org.evomaster.core.sql.schema.ColumnDataType.*
-import org.evomaster.core.sql.schema.ForeignKey
-import org.evomaster.core.sql.schema.Table
+import org.evomaster.core.database.sql.SqlAction
+import org.evomaster.core.database.sql.SqlActionGeneBuilder
+import org.evomaster.core.database.sql.SqlActionResult
+import org.evomaster.core.database.sql.schema.Column
+import org.evomaster.core.database.sql.schema.ColumnDataType.*
+import org.evomaster.core.database.sql.schema.ForeignKey
+import org.evomaster.core.database.sql.schema.Table
 import org.evomaster.core.output.EvaluatedIndividualBuilder.Companion.buildResourceEvaluatedIndividual
 import org.evomaster.core.output.service.PartialOracles
 import org.evomaster.core.output.service.RestTestCaseWriter
+import org.evomaster.core.output.service.TestSuiteWriter
 import org.evomaster.core.problem.enterprise.SampleType
 import org.evomaster.core.problem.rest.data.*
+import org.evomaster.core.problem.rest.param.BodyParam
+import org.evomaster.core.problem.rest.param.PathParam
 import org.evomaster.core.search.EvaluatedIndividual
 import org.evomaster.core.search.FitnessValue
 import org.evomaster.core.search.gene.*
@@ -23,9 +26,16 @@ import org.evomaster.core.search.gene.sql.SqlAutoIncrementGene
 import org.evomaster.core.search.gene.sql.SqlForeignKeyGene
 import org.evomaster.core.search.gene.sql.SqlPrimaryKeyGene
 import org.evomaster.core.search.gene.UUIDGene
+import org.evomaster.core.search.gene.collection.EnumGene
 import org.evomaster.core.search.gene.numeric.IntegerGene
 import org.evomaster.core.search.gene.string.StringGene
-import org.evomaster.core.sql.schema.TableId
+import org.evomaster.core.output.dto.GeneToDto
+import org.evomaster.core.search.gene.jsonpatch.JsonPatchDocumentGene
+import org.evomaster.core.search.gene.utils.GeneUtils
+import org.evomaster.core.search.gene.wrapper.CustomMutationRateGene
+import org.evomaster.core.search.gene.wrapper.OptionalGene
+import org.evomaster.core.search.service.Randomness
+import org.evomaster.core.database.sql.schema.TableId
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import javax.ws.rs.core.MediaType
@@ -99,6 +109,41 @@ class TestCaseWriterTest : WriterTestBase(){
         assertEquals(expectedLines.toString(), lines.toString())
     }
 
+
+    @Test
+    fun testTextAssertionWithHtmlEntityUsesStableFragment() {
+        val format = OutputFormat.JAVA_JUNIT_4
+        val writer = RestTestCaseWriter(getConfig(format), PartialOracles())
+        val lines = Lines(format)
+
+        writer.handleTextPlainTextAssertion(
+            "Unable to obtain a new access token for resource &#39;null&#39;.", // observed in the catwatch
+            null,
+            lines,
+            null
+        )
+
+        assertTrue(lines.toString().contains("containsString(\"Unable to obtain a new access token for resource\")"))
+        assertFalse(lines.toString().contains("&#39"))
+    }
+
+    @Test
+    fun testJsonStringAssertionWithHtmlEntityUsesStableFragment() {
+        val format = OutputFormat.JAVA_JUNIT_4
+        val writer = RestTestCaseWriter(getConfig(format), PartialOracles())
+        val lines = Lines(format)
+
+        writer.handleJsonStringAssertion(
+            "{\"message\":\"Unable to obtain a new access token for resource &#39;null&#39;.\"}",
+            null,
+            lines,
+            null,
+            false
+        )
+
+        assertTrue(lines.toString().contains("containsString(\"Unable to obtain a new access token for resource\")"))
+        assertFalse(lines.toString().contains("&#39"))
+    }
 
 
 
@@ -324,7 +369,7 @@ class TestCaseWriterTest : WriterTestBase(){
         val firstInsertionId = 1001L
         val insertIntoTable0 = SqlAction(table0, setOf(idColumn), firstInsertionId, listOf(primaryKeyTable0Gene))
         val secondInsertionId = 1002L
-        val foreignKeyGene = SqlForeignKeyGene(fkColumn.name, secondInsertionId, "Table0", false, uniqueIdOfPrimaryKey = pkGeneUniqueId)
+        val foreignKeyGene = SqlForeignKeyGene(fkColumn.name, secondInsertionId, TableId("Table0"), idColumn.name, false, uniqueIdOfPrimaryKey = pkGeneUniqueId)
 
         val insertIntoTable1 = SqlAction(table1, setOf(idColumn, fkColumn), secondInsertionId, listOf(primaryKeyTable1Gene, foreignKeyGene))
 
@@ -350,6 +395,84 @@ class TestCaseWriterTest : WriterTestBase(){
             indent()
             add(".d(\"Id\", \"42\")")
             add(".d(\"fkId\", \"42\")")
+            deindent()
+            add(".dtos();")
+            deindent()
+            add("InsertionResultsDto insertionsresult = controller.execInsertionsIntoDatabase(insertions);")
+            deindent()
+            add("}")
+        }
+
+        assertEquals(expectedLines.toString(), lines.toString())
+    }
+
+
+    @Test
+    fun testMultipleForeignKeyColumns() {
+        val idColumn = Column("Id", INTEGER, 10, primaryKey = true, databaseType = DatabaseType.H2)
+        val table0 = Table("Table0", setOf(idColumn), HashSet<ForeignKey>())
+        val table1 = Table("Table1", setOf(idColumn), HashSet<ForeignKey>())
+
+        val fk0Column = Column("fkId0", INTEGER, 10, primaryKey = false, databaseType = DatabaseType.H2)
+        val fk1Column = Column("fkId1", INTEGER, 10, primaryKey = false, databaseType = DatabaseType.H2)
+        val table2 = Table("Table2", setOf(idColumn, fk0Column, fk1Column), HashSet<ForeignKey>())
+
+
+        val pk0UniqueId = 12345L
+        val pk1UniqueId = 54321L
+
+        val integerGene0 = IntegerGene(idColumn.name, 42, 0, 100)
+        val primaryKeyTable0Gene = SqlPrimaryKeyGene(idColumn.name, TableId("Table0"), integerGene0, pk0UniqueId)
+
+        val integerGene1 = IntegerGene(idColumn.name, 84, 0, 100)
+        val primaryKeyTable1Gene = SqlPrimaryKeyGene(idColumn.name, TableId("Table1"), integerGene1, pk1UniqueId)
+
+        val integerGene2 = IntegerGene(idColumn.name, 10, 0, 100)
+        val primaryKeyTable2Gene = SqlPrimaryKeyGene(idColumn.name, TableId("Table2"), integerGene2, 20)
+
+
+        val firstInsertionId = 1001L
+        val insertIntoTable0 = SqlAction(table0, setOf(idColumn), firstInsertionId, listOf(primaryKeyTable0Gene))
+
+        val secondInsertionId = 1002L
+        val insertIntoTable1 = SqlAction(table1, setOf(idColumn), secondInsertionId, listOf(primaryKeyTable1Gene))
+
+        val thirdInsertionId = 1003L
+        val foreignKey0Gene = SqlForeignKeyGene(fk0Column.name, thirdInsertionId, TableId("Table0"), idColumn.name, false, uniqueIdOfPrimaryKey = pk0UniqueId)
+        val foreignKey1Gene = SqlForeignKeyGene(fk1Column.name, thirdInsertionId, TableId("Table1"), idColumn.name, false, uniqueIdOfPrimaryKey = pk1UniqueId)
+
+        val insertIntoTable2 = SqlAction(table2, setOf(idColumn, fk0Column, fk1Column), thirdInsertionId, listOf(primaryKeyTable2Gene, foreignKey0Gene, foreignKey1Gene))
+
+        val (format, baseUrlOfSut, ei) = buildEvaluatedIndividual(mutableListOf(
+                insertIntoTable0.copy() as SqlAction,
+                insertIntoTable1.copy() as SqlAction,
+                insertIntoTable2.copy() as SqlAction))
+        val config = getConfig(format)
+
+        val test = TestCase(test = ei, name = "test")
+
+        val writer = RestTestCaseWriter(config, PartialOracles())
+
+        val lines = writer.convertToCompilableTestCode(test, baseUrlOfSut)
+
+        val expectedLines = Lines(format).apply {
+            add("@Test")
+            add("public void test() throws Exception {")
+            indent()
+            add("List<InsertionDto> insertions = sql().insertInto(\"Table0\", 1001L)")
+            indent()
+            indent()
+            add(".d(\"Id\", \"42\")")
+            deindent()
+            add(".and().insertInto(\"Table1\", 1002L)")
+            indent()
+            add(".d(\"Id\", \"84\")")
+            deindent()
+            add(".and().insertInto(\"Table2\", 1003L)")
+            indent()
+            add(".d(\"Id\", \"10\")")
+            add(".d(\"fkId0\", \"42\")")
+            add(".d(\"fkId1\", \"84\")")
             deindent()
             add(".dtos();")
             deindent()
@@ -423,7 +546,7 @@ class TestCaseWriterTest : WriterTestBase(){
         val firstInsertionId = 1001L
         val insertIntoTable0 = SqlAction(table0, setOf(idColumn), firstInsertionId, listOf(primaryKeyTable0Gene))
         val secondInsertionId = 1002L
-        val foreignKeyGene = SqlForeignKeyGene(fkColumn.name, secondInsertionId, "Table0", true, -1L)
+        val foreignKeyGene = SqlForeignKeyGene(fkColumn.name, secondInsertionId, TableId("Table0"), idColumn.name, true, -1L)
 
         val insertIntoTable1 = SqlAction(table1, setOf(idColumn, fkColumn), secondInsertionId, listOf(primaryKeyTable1Gene, foreignKeyGene))
 
@@ -581,7 +704,7 @@ class TestCaseWriterTest : WriterTestBase(){
         val firstInsertionId = 1001L
         val insertIntoTable0 = SqlAction(table0, setOf(idColumn), firstInsertionId, listOf(primaryKeyTable0Gene))
         val secondInsertionId = 1002L
-        val foreignKeyGene = SqlForeignKeyGene(fkColumn.name, secondInsertionId, "Table0", false, pkGeneUniqueId)
+        val foreignKeyGene = SqlForeignKeyGene(fkColumn.name, secondInsertionId, TableId("Table0"), idColumn.name, false, pkGeneUniqueId)
 
         val insertIntoTable1 = SqlAction(table1, setOf(idColumn, fkColumn), secondInsertionId, listOf(primaryKeyTable1Gene, foreignKeyGene))
 
@@ -636,13 +759,13 @@ class TestCaseWriterTest : WriterTestBase(){
 
 
         val insertId1 = 1002L
-        val fkGene0 = SqlForeignKeyGene(table1_Id.name, insertId1, "Table0", false, insertId0)
+        val fkGene0 = SqlForeignKeyGene(table1_Id.name, insertId1, TableId("Table0"), table0_Id.name, false, insertId0)
         val pkGene1 = SqlPrimaryKeyGene(table1_Id.name, "Table1", fkGene0, insertId1)
         val insert1 = SqlAction(table1, setOf(table1_Id), insertId1, listOf(pkGene1))
 
 
         val insertId2 = 1003L
-        val fkGene1 = SqlForeignKeyGene(table2_Id.name, insertId2, "Table1", false, insertId1)
+        val fkGene1 = SqlForeignKeyGene(table2_Id.name, insertId2, TableId("Table1"), table1_Id.name, false, insertId1)
         val pkGene2 = SqlPrimaryKeyGene(table2_Id.name, "Table2", fkGene1, insertId2)
         val insert2 = SqlAction(table2, setOf(table2_Id), insertId2, listOf(pkGene2))
 
@@ -1023,7 +1146,7 @@ class TestCaseWriterTest : WriterTestBase(){
         val fooInsertionId = 1001L
         val fooInsertion = SqlAction(foo, setOf(fooId), fooInsertionId, listOf(pkFoo))
         val barInsertionId = 1002L
-        val foreignKeyGene = SqlForeignKeyGene(fkId.name, barInsertionId, "Foo", false, uniqueIdOfPrimaryKey = pkGeneUniqueId)
+        val foreignKeyGene = SqlForeignKeyGene(fkId.name, barInsertionId, TableId("Foo"), fooId.name, false, uniqueIdOfPrimaryKey = pkGeneUniqueId)
         val barInsertion = SqlAction(bar, setOf(fooId, fkId), barInsertionId, listOf(pkBar, foreignKeyGene))
 
         val fooAction = RestCallAction("1", HttpVerb.GET, RestPath("/foo"), mutableListOf())
@@ -1095,7 +1218,7 @@ public void test() throws Exception {
         val fooInsertionId = 1001L
         val fooInsertion = SqlAction(foo, setOf(fooId), fooInsertionId, listOf(pkFoo))
         val barInsertionId = 1002L
-        val foreignKeyGene = SqlForeignKeyGene(fkId.name, barInsertionId, "Foo", false, uniqueIdOfPrimaryKey = pkGeneUniqueId)
+        val foreignKeyGene = SqlForeignKeyGene(fkId.name, barInsertionId, TableId("Foo"), fooId.name, false, uniqueIdOfPrimaryKey = pkGeneUniqueId)
         val barInsertion = SqlAction(bar, setOf(fooId, fkId), barInsertionId, listOf(pkBar, foreignKeyGene))
 
         val fooAction = RestCallAction("1", HttpVerb.GET, RestPath("/foo"), mutableListOf())
@@ -1200,6 +1323,35 @@ public void test() throws Exception {
 
 
     @Test
+    fun testJavaObjectAssertionInArrayUsesGPathIndex() {
+        val fooAction = RestCallAction("1", HttpVerb.GET, RestPath("/foo"), mutableListOf())
+
+        val (format, baseUrlOfSut, ei) = buildResourceEvaluatedIndividual(
+            dbInitialization = mutableListOf(),
+            groups = mutableListOf(
+                (mutableListOf<SqlAction>() to mutableListOf(fooAction))
+            ),
+            format = OutputFormat.JAVA_JUNIT_4
+        )
+
+        val fooResult = ei.seeResult(fooAction.getLocalId()) as RestCallResult
+        fooResult.setTimedout(false)
+        fooResult.setStatusCode(200)
+        fooResult.setBody("[{}]") // example in restcountries
+        fooResult.setBodyType(MediaType.APPLICATION_JSON_TYPE)
+
+        val config = getConfig(format)
+        val test = TestCase(test = ei, name = "test")
+
+        val writer = RestTestCaseWriter(config, PartialOracles())
+        val lines = writer.convertToCompilableTestCode(test, baseUrlOfSut)
+
+        assertTrue(lines.toString().contains(".body(\"[0].isEmpty()\", is(true))"))
+        assertFalse(lines.toString().contains(".body(\"'[0]'.isEmpty()\", is(true))"))
+    }
+
+
+    @Test
     fun testTestWithObjectAssertion(){
         val fooAction = RestCallAction("1", HttpVerb.GET, RestPath("/foo"), mutableListOf())
 
@@ -1249,7 +1401,8 @@ public void test() throws Exception {
             test("test", async () => {
                 
                 const res_0 = await superagent
-                        .get(baseUrlOfSut + "/foo").set('Accept', "*/*")
+                        .get(baseUrlOfSut + "/foo")
+                        .timeout({response: ${TestSuiteWriter.httpTimeoutVarMs}, deadline: ${TestSuiteWriter.httpTimeoutVarMs}}).set('Accept', "*/*")
                         .ok(res => res.status);
                 
                 expect(res_0.status).toBe(200);
@@ -1322,7 +1475,8 @@ public void test() throws Exception {
             test("test", async () => {
                 
                 const res_0 = await superagent
-                        .get(baseUrlOfSut + "/foo").set('Accept', "*/*")
+                        .get(baseUrlOfSut + "/foo")
+                        .timeout({response: ${TestSuiteWriter.httpTimeoutVarMs}, deadline: ${TestSuiteWriter.httpTimeoutVarMs}}).set('Accept', "*/*")
                         .ok(res => res.status);
                 
                 expect(res_0.status).toBe(200);
@@ -1362,7 +1516,7 @@ public void test() throws Exception {
         fooResult.setStatusCode(200)
         fooResult.setBody("""
            {
-                "email":$email
+                "email":"$email"
            }
         """.trimIndent())
         fooResult.setBodyType(MediaType.APPLICATION_JSON_TYPE)
@@ -1380,7 +1534,8 @@ public void test() throws Exception {
             test("test", async () => {
                 
                 const res_0 = await superagent
-                        .get(baseUrlOfSut + "/foo").set('Accept', "*/*")
+                        .get(baseUrlOfSut + "/foo")
+                        .timeout({response: ${TestSuiteWriter.httpTimeoutVarMs}, deadline: ${TestSuiteWriter.httpTimeoutVarMs}}).set('Accept', "*/*")
                         .ok(res => res.status);
                 
                 expect(res_0.status).toBe(200);
@@ -1392,4 +1547,305 @@ public void test() throws Exception {
         assertEquals(expectedLines, lines.toString())
     }
 
+
+    @Test
+    fun testTestFlakyBodyForRestCallResponses(){
+        val fooAction = RestCallAction("1", HttpVerb.GET, RestPath("/foo"), mutableListOf())
+
+        val (format, baseUrlOfSut, ei) = buildResourceEvaluatedIndividual(
+            dbInitialization = mutableListOf(),
+            groups = mutableListOf(
+                (mutableListOf<SqlAction>() to mutableListOf(fooAction))
+            ),
+            format = OutputFormat.JAVA_JUNIT_5
+        )
+
+        val fooResult = ei.seeResult(fooAction.getLocalId()) as RestCallResult
+        fooResult.setTimedout(false)
+        fooResult.setStatusCode(200)
+        fooResult.setBody("""
+           {
+                "p0":[1,2],
+                "p1":{},
+                "p2":{
+                    "id":"foo",
+                    "properties":[
+                        {},
+                        {
+                          "name":"mapProperty1",
+                          "type":"string",
+                          "value":"one"
+                        },
+                        {
+                          "name":"mapProperty2",
+                          "type":"string",
+                          "value":"two"
+                        }],
+                    "empty":{}
+                }
+           }
+        """.trimIndent())
+        fooResult.setBodyType(MediaType.APPLICATION_JSON_TYPE)
+
+
+        val barResult = RestCallResult(fooAction.getLocalId())
+        barResult.setTimedout(false)
+        barResult.setStatusCode(500)
+        barResult.setBody("""
+           {
+                "p0":[1,2,3],
+                "p1":{},
+                "p2":{
+                    "id":"foo",
+                    "properties":[
+                        {},
+                        {
+                          "name":"flaky1",
+                          "type":"string",
+                          "value":"flaky2"
+                        },
+                        {
+                          "name":"mapProperty2",
+                          "type":"string",
+                          "value":"two"
+                        },
+                        {
+                          "name":"flaky3",
+                          "type":"string",
+                          "value":"two"
+                        }],
+                    "empty":{
+                        "flakyField4": 42
+                    }
+                }
+           }
+        """.trimIndent())
+        barResult.setBodyType(MediaType.APPLICATION_JSON_TYPE)
+
+        fooResult.setFlakiness(barResult)
+
+        val config = getConfig(format)
+        config.handleFlakiness = true
+
+        val test = TestCase(test = ei, name = "test")
+
+        val writer = RestTestCaseWriter(config, PartialOracles())
+        val lines = writer.convertToCompilableTestCode( test, baseUrlOfSut)
+
+        assertEquals(6, getNumberOfFlakyComment(config,lines.toString()))
+    }
+
+    @Test
+    fun testTestFlakyListForRestCallResponses(){
+        val fooAction = RestCallAction("1", HttpVerb.GET, RestPath("/foo"), mutableListOf())
+
+        val (format, baseUrlOfSut, ei) = buildResourceEvaluatedIndividual(
+            dbInitialization = mutableListOf(),
+            groups = mutableListOf(
+                (mutableListOf<SqlAction>() to mutableListOf(fooAction))
+            ),
+            format = OutputFormat.JAVA_JUNIT_5
+        )
+
+        val fooResult = ei.seeResult(fooAction.getLocalId()) as RestCallResult
+        fooResult.setTimedout(false)
+        fooResult.setStatusCode(200)
+        fooResult.setBody("""
+           ["foo", "bar"]
+        """.trimIndent())
+        fooResult.setBodyType(MediaType.APPLICATION_JSON_TYPE)
+
+
+        val barResult = RestCallResult(fooAction.getLocalId())
+        barResult.setTimedout(false)
+        barResult.setStatusCode(500)
+        barResult.setBody("""
+           ["foo", "abc", "bar"]
+        """.trimIndent())
+        barResult.setBodyType(MediaType.APPLICATION_JSON_TYPE)
+
+        fooResult.setFlakiness(barResult)
+
+        val config = getConfig(format)
+        config.handleFlakiness = true
+
+        val test = TestCase(test = ei, name = "test")
+
+        val writer = RestTestCaseWriter(config, PartialOracles())
+        val lines = writer.convertToCompilableTestCode( test, baseUrlOfSut)
+
+        assertEquals(3, getNumberOfFlakyComment(config,lines.toString()))
+    }
+
+    @Test
+    fun testNumberMatchesForLong(){
+        val fooAction = RestCallAction("1", HttpVerb.GET, RestPath("/foo"), mutableListOf())
+
+        val (format, baseUrlOfSut, ei) = buildResourceEvaluatedIndividual(
+            dbInitialization = mutableListOf(),
+            groups = mutableListOf(
+                (mutableListOf<SqlAction>() to mutableListOf(fooAction))
+            ),
+            format = OutputFormat.JAVA_JUNIT_5
+        )
+
+        val fooResult = ei.seeResult(fooAction.getLocalId()) as RestCallResult
+        fooResult.setTimedout(false)
+        fooResult.setStatusCode(200)
+        fooResult.setBody(
+            """
+            {
+              "p0": [3000000000, 3000000001, 3000000002]
+            }
+            """.trimIndent()
+        )
+        fooResult.setBodyType(MediaType.APPLICATION_JSON_TYPE)
+
+        val config = getConfig(format)
+
+        val test = TestCase(test = ei, name = "test")
+
+        val writer = RestTestCaseWriter(config, PartialOracles())
+        val lines = writer.convertToCompilableTestCode( test, baseUrlOfSut)
+        lines.toString().apply {
+            assertTrue(contains("numberMatches(3000000000L)"))
+            assertTrue(contains("numberMatches(3000000001L)"))
+            assertTrue(contains("numberMatches(3000000002L)"))
+        }
+    }
+
+    @Test
+    fun testJsonPatchBodyRenderedAsDto() {
+        val format = OutputFormat.KOTLIN_JUNIT_5
+        val baseUrlOfSut = "baseUrlOfSut"
+
+        val schema = ObjectGene("body", listOf(StringGene("name"), IntegerGene("age")))
+        val typeGene = EnumGene("contentType", listOf("application/json-patch+json")).apply { index = 0 }
+        val bodyParam = BodyParam(gene = JsonPatchDocumentGene("patch", schema), typeGene = typeGene)
+
+        val action = RestCallAction("1", HttpVerb.PATCH, RestPath("/items/1"), mutableListOf(bodyParam))
+        val individual = RestIndividual(mutableListOf(action), SampleType.RANDOM)
+        TestUtils.doInitializeIndividualForTesting(individual, Randomness().apply { updateSeed(42L) })
+
+        val fitnessVal = FitnessValue(0.0)
+        val result = RestCallResult(action.getLocalId()).apply { setStatusCode(200) }
+        val ei = EvaluatedIndividual(fitnessVal, individual, listOf(result))
+
+        val config = getConfig(format)
+        config.dtoForRequestPayload = true
+        config.problemType = EMConfig.ProblemType.REST
+
+        val test = TestCase(test = ei, name = "test")
+        val writer = RestTestCaseWriter(config, PartialOracles())
+        val output = writer.convertToCompilableTestCode(test, baseUrlOfSut).toString()
+
+        // The JSON Patch body must be rendered as a DTO list, not as a raw JSON string.
+        assertTrue(output.contains("list_${GeneToDto.JSON_PATCH_OPERATION_DTO}_"),
+            "Expected DTO list variable in generated output")
+        assertTrue(output.contains(".body(list_${GeneToDto.JSON_PATCH_OPERATION_DTO}_"),
+            "Expected DTO variable passed as body argument")
+        assertFalse(output.contains("{\"op\":"),
+            "Body must not contain raw JSON string representation of a patch operation")
+    }
+
+    @Test
+    fun testInActiveBodyParamInTest(){
+        val stringGene = StringGene("stringGene")
+        val optionalGene = OptionalGene(stringGene.name, stringGene)
+        optionalGene.isActive = false
+        val enumGene = EnumGene("contentType", listOf("text/plain"))
+        stringGene.value = "EX_123"
+        enumGene.index = 0
+        val bodyParam = BodyParam(gene = optionalGene, typeGene = enumGene)
+        bodyParam.contentRemoveQuotesGene.gene.value = false
+
+        val format = OutputFormat.JAVA_JUNIT_5
+
+        val textBody = bodyParam.getValueAsPrintableString(mode = GeneUtils.EscapeMode.TEXT, targetFormat = format)
+        assertEquals("", textBody)
+
+        val baseUrlOfSut = "baseUrlOfSut"
+        val action = RestCallAction("1", HttpVerb.PUT, RestPath("/"), mutableListOf(bodyParam))
+        val restActions = listOf(action).toMutableList()
+        val individual = RestIndividual(restActions, SampleType.RANDOM)
+        TestUtils.doInitializeIndividualForTesting(individual)
+
+        val fitnessVal = FitnessValue(0.0)
+        val result = RestCallResult(action.getLocalId())
+        result.setTimedout(timedout = true)
+        val results = listOf(result)
+        val ei = EvaluatedIndividual(fitnessVal, individual, results)
+        val config = getConfig(format)
+
+        val test = TestCase(test = ei, name = "test")
+
+        val writer = RestTestCaseWriter(config, PartialOracles())
+
+        val lines = writer.convertToCompilableTestCode( test, baseUrlOfSut)
+
+        assertFalse(lines.toString().contains(".body()"))
+
+    }
+
+    @Test
+    fun testNonAsciiInPathParamIsEncoded() {
+        // non-ASCII characters in path parameter values must be percent-encoded in generated test output.
+        val format = OutputFormat.KOTLIN_JUNIT_5
+
+        val pathParam = PathParam("key", CustomMutationRateGene("key", StringGene("key", "聚"), 1.0))
+        val action = RestCallAction("1", HttpVerb.GET, RestPath("/api/{key}"), mutableListOf(pathParam))
+        val individual = RestIndividual(mutableListOf(action), SampleType.RANDOM)
+        TestUtils.doInitializeIndividualForTesting(individual)
+
+        val result = RestCallResult(action.getLocalId())
+        result.setTimedout(false)
+        result.setStatusCode(200)
+        val ei = EvaluatedIndividual(FitnessValue(0.0), individual, listOf(result))
+
+        val writer = RestTestCaseWriter(getConfig(format), PartialOracles())
+        val lines = writer.convertToCompilableTestCode(TestCase(test = ei, name = "test"), "baseUrlOfSut")
+        val output = lines.toString()
+
+        assertFalse(output.contains("聚"),
+            "Non-ASCII character must not appear raw in generated test output, got:\n$output")
+
+        assertTrue(output.contains("%E8%81%9A"),
+            "Non-ASCII character must be percent-encoded as %E8%81%9A in generated test output, got:\n$output")
+    }
+
+    @Test
+    fun testStringWithDollarKotlin() {
+        // A StringGene value containing '$' must be escaped as '\$' in generated Kotlin source. Currently,
+        // SqlWriter.getPrintableValue applies StringEscapeUtils.escapeJava() after GeneUtils.applyEscapes(),
+        // which doubles the backslash and leaves '$' bare, causing a Kotlin string template compile error.
+        val aColumn = Column("name", VARCHAR, 10, databaseType = DatabaseType.H2)
+        val aTable = Table("myTable", setOf(aColumn), HashSet<ForeignKey>())
+
+        val gene = StringGene("name", "v\$t")
+        val insertAction = SqlAction(aTable, setOf(aColumn), 0L, mutableListOf(gene))
+
+        val (_, baseUrlOfSut, ei) = buildEvaluatedIndividual(mutableListOf(insertAction))
+
+        val format = OutputFormat.KOTLIN_JUNIT_5
+        val writer = RestTestCaseWriter(getConfig(format), PartialOracles())
+        val lines = writer.convertToCompilableTestCode(TestCase(test = ei, name = "test"), baseUrlOfSut)
+
+        val expectedLines = Lines(format).apply {
+            add("@Test")
+            add("fun test()  {")
+            indent()
+            add("val insertions = sql().insertInto(\"myTable\", 0L)")
+            indent()
+            indent()
+            add(".d(\"name\", \"\\\"v\\\$t\\\"\")")
+            deindent()
+            add(".dtos()")
+            deindent()
+            add("val insertionsresult = controller.execInsertionsIntoDatabase(insertions)")
+            deindent()
+            add("}")
+        }
+
+        assertEquals(expectedLines.toString(), lines.toString())
+    }
 }

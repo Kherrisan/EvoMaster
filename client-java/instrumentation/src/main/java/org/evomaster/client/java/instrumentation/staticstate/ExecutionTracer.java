@@ -1,8 +1,9 @@
 package org.evomaster.client.java.instrumentation.staticstate;
 
-import org.evomaster.client.java.instrumentation.*;
-import org.evomaster.client.java.instrumentation.heuristic.HeuristicsForJumps;
 import org.evomaster.client.java.distance.heuristics.Truthness;
+import org.evomaster.client.java.instrumentation.*;
+import org.evomaster.client.java.instrumentation.cassandra.CassandraTableMetadata;
+import org.evomaster.client.java.instrumentation.heuristic.HeuristicsForJumps;
 import org.evomaster.client.java.instrumentation.shared.*;
 
 import java.util.*;
@@ -35,7 +36,13 @@ public class ExecutionTracer {
 
     private static boolean executingInitMongo = false;
 
+    private static boolean executingInitCassandra = false;
+
     private static boolean executingInitRedis = false;
+
+    private static boolean executingInitNeo4J = false;
+
+    private static boolean executingInitDynamoDB = false;
 
     /**
      * indicate whether now it is to execute action during the search
@@ -138,6 +145,7 @@ public class ExecutionTracer {
             sleepingThreads.clear();
             lastCallerClass = null;
             skippedExternalServices = new ArrayList<>();
+            executingInitDynamoDB = false;
         }
     }
 
@@ -197,8 +205,20 @@ public class ExecutionTracer {
         ExecutionTracer.executingInitMongo = executingInitMongo;
     }
 
+    public static void setExecutingInitCassandra(boolean executingInitCassandra) {
+        ExecutionTracer.executingInitCassandra = executingInitCassandra;
+    }
+
     public static void setExecutingInitRedis(boolean executingInitRedis) {
         ExecutionTracer.executingInitRedis = executingInitRedis;
+    }
+
+    public static void setExecutingInitNeo4J(boolean executingInitNeo4J) {
+        ExecutionTracer.executingInitNeo4J = executingInitNeo4J;
+    }
+
+    public static void setExecutingInitDynamoDB(boolean executingInitDynamoDB) {
+        ExecutionTracer.executingInitDynamoDB = executingInitDynamoDB;
     }
 
     public static boolean isExecutingAction() {
@@ -429,6 +449,16 @@ public class ExecutionTracer {
             getCurrentAdditionalInfo().addMongoInfo(info);
     }
 
+    public static void addCqlInfo(ExecutedCqlCommand info){
+        if (!executingInitCassandra)
+            getCurrentAdditionalInfo().addCqlInfo(info);
+    }
+
+    public static void addNeo4JInfo(Neo4JRunCommand info){
+        if (!executingInitNeo4J)
+            getCurrentAdditionalInfo().addNeo4JInfo(info);
+    }
+
     public static void addOpenSearchInfo(OpenSearchCommand info) {
         getCurrentAdditionalInfo().addOpenSearchInfo(info);
     }
@@ -438,9 +468,20 @@ public class ExecutionTracer {
             getCurrentAdditionalInfo().addRedisCommand(info);
     }
 
+    public static void addDynamoDbInfo(DynamoDbCommand info) {
+        if (!executingInitDynamoDB)
+            getCurrentAdditionalInfo().addDynamoDbInfo(info);
+    }
+
     public static void addMongoCollectionType(MongoCollectionSchema mongoCollectionSchema){
         if (!executingInitMongo) {
             getCurrentAdditionalInfo().addMongoCollectionType(mongoCollectionSchema);
+        }
+    }
+
+    public static void addCassandraTableMetadata(CassandraTableMetadata cassandraTableMetadata){
+        if (!executingInitCassandra) {
+            getCurrentAdditionalInfo().addCassandraTableMetadata(cassandraTableMetadata);
         }
     }
 

@@ -8,17 +8,16 @@ import com.netflix.governator.guice.LifecycleInjector
 import org.evomaster.core.BaseModule
 import org.evomaster.core.EMConfig
 import org.evomaster.core.TestUtils
+import org.evomaster.core.search.SearchTestBase
 import org.evomaster.core.search.algorithms.onemax.OneMaxIndividual
 import org.evomaster.core.search.algorithms.onemax.OneMaxModule
 import org.evomaster.core.search.algorithms.onemax.OneMaxSampler
-import org.evomaster.core.search.service.ExecutionPhaseController
-import org.evomaster.core.search.service.SearchTimeController
+import org.evomaster.core.search.service.time.ExecutionPhaseController
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 
-class RandomWalkSearchTest {
+class RandomWalkSearchTest : SearchTestBase(){
 
 
 
@@ -27,7 +26,7 @@ class RandomWalkSearchTest {
         TestUtils.handleFlaky {
 
             val injector: Injector = LifecycleInjector.builder()
-                .withModules(* arrayOf<Module>(OneMaxModule(), BaseModule()))
+                .withModules(* arrayOf<Module>(OneMaxModule(), BaseModule(arrayOf("--blackBox","false"))))
                 .build().createInjector()
 
             val rw = injector.getInstance(Key.get(
@@ -43,7 +42,7 @@ class RandomWalkSearchTest {
             sampler.n = n
 
             val epc = injector.getInstance(ExecutionPhaseController::class.java)
-            epc.startSearch()
+            epc.markStartingSearch()
 
             val solution = rw.search()
 

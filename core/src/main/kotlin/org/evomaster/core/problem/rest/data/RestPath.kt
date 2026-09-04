@@ -173,6 +173,10 @@ class RestPath(path: String) {
         return elements.flatMap { it.tokens }.any { it.isParameter }
     }
 
+    /**
+     * Check if having the exact same structure, base only on static information.
+     * Ie, variable resolution could lead to different resolved paths
+     */
     fun isEquivalent(other: RestPath): Boolean {
         if (this.elements.size != other.elements.size) {
             return false
@@ -243,6 +247,14 @@ class RestPath(path: String) {
         return other.isSameOrAncestorOf(this)
     }
 
+    fun isStrictlyAncestorOf(other: RestPath): Boolean {
+        if(this.elements.size == other.elements.size && (this.endsWithSlash || !other.endsWithSlash)){
+            //if same size, then only possibility of being ancestor if other ends with slash, but not this
+            return false
+        }
+        return isSameOrAncestorOf(other)
+    }
+
 
     /**
      * Prefix or same as "other"
@@ -255,7 +267,7 @@ class RestPath(path: String) {
             return false
         }
 
-        return (0 until this.elements.size).none { other.elements[it] != this.elements[it] }
+        return this.elements.indices.none { other.elements[it] != this.elements[it] }
     }
 
 
@@ -405,7 +417,9 @@ class RestPath(path: String) {
                             why not using URI also for Query part???
                             it seems unclear how to properly build it as a single string...
                          */
-                        val entry = URI(null, null, path.toString(), null, null).rawPath
+                        val entry = encodeNonAsciiPathCharacters(
+                            URI(null, null, path.toString(), null, null).rawPath
+                        )
                         data.add(Pair(entry, false))
                         path.setLength(0) // clear it
                         data.add(Pair(variable, true))
@@ -438,7 +452,9 @@ class RestPath(path: String) {
         }
 
         if(path.isNotEmpty()){
-            val entry = URI(null, null, path.toString(), null, null).rawPath
+            val entry = encodeNonAsciiPathCharacters(
+                URI(null, null, path.toString(), null, null).rawPath
+            )
             data.add(Pair(entry, false))
         }
 
@@ -461,6 +477,25 @@ class RestPath(path: String) {
      */
     private fun encode(s: String): String {
         return URLEncoder.encode(s, "UTF-8")
+    }
+
+    /**
+     * [URI.rawPath] leaves non-ASCII path characters unencoded. Process them
+     * by code point so valid surrogate pairs are kept together. An isolated
+     * surrogate is encoded by [URLEncoder] as `%3F` instead of failing.
+     */
+    private fun encodeNonAsciiPathCharacters(path: String): String {
+        val result = StringBuilder()
+        var index = 0
+
+        while (index < path.length) {
+            val codePoint = Character.codePointAt(path, index)
+            val value = String(Character.toChars(codePoint))
+            result.append(if (codePoint > 127) encode(value) else value)
+            index += Character.charCount(codePoint)
+        }
+
+        return result.toString()
     }
 
     fun copy(): RestPath {
@@ -590,6 +625,20 @@ class RestPath(path: String) {
     }
 
     fun isRoot() = levels() == 0
+
+    /**
+     * Checks if this path has an ancestor (parent path).
+     * Returns true if the path has more than one level AND ends with a parameter.
+     *
+     * Examples:
+     * - /{id}/child/{cid} returns true (has ancestor and ends with parameter)
+     * - /{id} returns false (single level, no ancestor)
+     * - /{id}/child returns false (does not end with parameter)
+     * - /{id}/child/ returns false (does not end with parameter)
+     * - /users/{id} returns true (has ancestor and ends with parameter)
+     * - /users returns false (single level, no ancestor)
+     */
+    fun hasAncestorAndLastElementParameter(): Boolean = levels() > 1 && isLastElementAParameter()
 
     fun parentPath() : RestPath {
         if(isRoot()){

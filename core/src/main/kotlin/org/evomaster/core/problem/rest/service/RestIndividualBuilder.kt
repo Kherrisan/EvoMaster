@@ -1,9 +1,8 @@
 package org.evomaster.core.problem.rest.service
 
 import com.google.inject.Inject
-import org.evomaster.core.problem.enterprise.EnterpriseActionGroup
 import org.evomaster.core.problem.rest.*
-import org.evomaster.core.problem.rest.builder.CreateResourceUtils
+import org.evomaster.core.problem.rest.builder.DynamicPathUtils
 import org.evomaster.core.problem.rest.builder.RestIndividualSelectorUtils
 import org.evomaster.core.problem.rest.data.HttpVerb
 import org.evomaster.core.problem.rest.data.RestCallAction
@@ -11,9 +10,8 @@ import org.evomaster.core.problem.rest.data.RestIndividual
 import org.evomaster.core.problem.rest.data.RestPath
 import org.evomaster.core.problem.rest.service.sampler.AbstractRestSampler
 import org.evomaster.core.search.EvaluatedIndividual
-import org.evomaster.core.search.action.EnvironmentAction
 import org.evomaster.core.search.service.Randomness
-import javax.ws.rs.POST
+import org.evomaster.core.database.sql.SqlAction
 
 
 /**
@@ -29,6 +27,14 @@ class RestIndividualBuilder {
     private lateinit var randomness: Randomness
 
     companion object{
+
+        /**
+         * WARNING: to be used only for tests
+         */
+        fun createIndependentBuilderForTests() : RestIndividualBuilder {
+            //no sampler is instantiated here... so, calls needing it, will fail
+            return RestIndividualBuilder().apply { randomness = Randomness() }
+        }
 
         fun sliceAllCallsInIndividualAfterAction(
             evaluatedIndividual: EvaluatedIndividual<RestIndividual>,
@@ -75,58 +81,96 @@ class RestIndividualBuilder {
 
             return ind
         }
+    }
 
 
-        fun merge(first: RestIndividual, second: RestIndividual, third: RestIndividual): RestIndividual {
-            return merge(merge(first, second), third)
+    fun merge(first: RestIndividual, second: RestIndividual, third: RestIndividual): RestIndividual {
+        return merge(merge(first, second), third)
+    }
+
+    /**
+     * Create a new individual, based on [first] followed by [second].
+     * Initialization actions are properly taken care of,
+     * and repaired if needed (eg, for unique constraints).
+     */
+    fun merge(first: RestIndividual, second: RestIndividual): RestIndividual {
+
+        val before = first.seeAllActions().size + second.seeAllActions().size -
+            //cleanup actions are going to be removed, as anyway automatically added
+            //when evaluating fitness... and check for duplicates is done there
+             first.seeCleanUpActions().size - second.seeCleanUpActions().size
+
+        val base = first.copy() as RestIndividual
+        base.ensureFlattenedStructure()
+        base.removeAllCleanUp()
+        val other = second.copy() as RestIndividual
+        other.ensureFlattenedStructure()
+        other.removeAllCleanUp()
+
+        /*
+            we need to reset local ids in other, to avoid clashes with ids in base.
+            however, need to make sure no chain is broken
+         */
+        other.seeAllActions().filterIsInstance<RestCallAction>()
+            .forEach { it.revertToWeakReference() }
+        other.resetLocalIdRecursively()
+
+        //avoid possible taint id conflicts
+        base.seeAllActions().forEach { it.forceNewTaints() }
+        other.seeAllActions().forEach { it.forceNewTaints() }
+
+        val thresholdId = base.seeInitializingActions()
+            .filterIsInstance<SqlAction>()
+            .maxOfOrNull { it.insertionId }
+            ?: 0
+        val envOther = other.seeInitializingActions()
+        val minId = envOther
+            .filterIsInstance<SqlAction>()
+            .filter{ ! it.representExistingData}
+            .minOfOrNull { it.insertionId }
+            ?: 0
+        if(minId <= thresholdId){
+            //if so, merging as it is might lead to id clashes.
+            //need to increase by a delta
+            val delta = (thresholdId - minId) + 1
+            envOther.filterIsInstance<SqlAction>()
+                .filter { !it.representExistingData }
+                .forEach { it.shiftIdBy(delta) }
         }
 
-        /**
-         * Create a new individual, based on [first] followed by [second].
-         * Initialization actions are properly taken care of.
+        val duplicates = base.addInitializingActions(envOther)
+
+        other.getFlattenMainEnterpriseActionGroup()!!.forEach { group ->
+            base.addMainEnterpriseActionGroup(group)
+        }
+
+        base.resolveAllTempData()
+        base.repairInitializationActions(randomness)
+
+        /*
+            TODO are links properly handled in such a merge???
+            would need assertions here, as well as test cases
          */
-        fun merge(first: RestIndividual, second: RestIndividual): RestIndividual {
 
-            val before = first.seeAllActions().size + second.seeAllActions().size
+        val after = base.seeAllActions().size
+        //merge shouldn't lose any actions
+        assert(before == (after+duplicates)) { "$after+$duplicates!=$before" }
 
-            val base = first.copy() as RestIndividual
-            base.ensureFlattenedStructure()
-            val other = second.copy() as RestIndividual
-            other.ensureFlattenedStructure()
-
+        if(!first.isValidInitializationActions() || !second.isValidInitializationActions()){
             /*
-                we need to reset local ids in other, to avoid clashes with ids in base.
-                however, need to make sure no chain is broken
+                FIXME
+                current SQL repair is not bullet-proof.
+                input individuals might not be "valid"...
+                so here we would crash.
+                we need to fix SQL repair and constraints.
+                this happens for example in proxyprint and in user-management
              */
-            other.seeAllActions().filterIsInstance<RestCallAction>()
-                .forEach { it.revertToWeakReference() }
-            other.resetLocalIdRecursively()
-
-            //avoid possible taint id conflicts
-            base.seeAllActions().forEach { it.forceNewTaints() }
-            other.seeAllActions().forEach { it.forceNewTaints() }
-
-            val duplicates = base.addInitializingActions(other.seeInitializingActions())
-
-            other.getFlattenMainEnterpriseActionGroup()!!.forEach { group ->
-                base.addMainEnterpriseActionGroup(group)
-            }
-
-            base.resolveAllTempData()
-
-            /*
-                TODO are links properly handled in such a merge???
-                would need assertions here, as well as test cases
-             */
-
-            val after = base.seeAllActions().size
-            //merge shouldn't lose any actions
-            assert(before == (after+duplicates)) { "$after+$duplicates!=$before" }
-
-            base.verifyValidity(true)
-
             return base
         }
+
+        base.verifyValidity(true)
+
+        return base
     }
 
 
@@ -160,7 +204,7 @@ class RestIndividualBuilder {
         }
         res.auth = target.auth
         res.forceNewTaints()
-        res.bindToSamePathResolution(target)
+        DynamicPathUtils.bindToSamePathResolution(res, target)
 
         return res
     }
@@ -198,9 +242,9 @@ class RestIndividualBuilder {
         res.auth = previous.auth
         res.forceNewTaints()
         if(res.path.isEquivalent(previous.path)) {
-            res.bindToSamePathResolution(previous)
+            DynamicPathUtils.bindToSamePathResolution(res,previous)
         }
-        CreateResourceUtils.linkDynamicCreateResource(previous, res)
+        DynamicPathUtils.linkDynamicCreateResource(previous, res)
 
         return res
     }
@@ -340,7 +384,7 @@ class RestIndividualBuilder {
             Once the create is fully initialized, need to fix
             links with target
          */
-        CreateResourceUtils.linkDynamicCreateResource(create, target)
+        DynamicPathUtils.linkDynamicCreateResource(create, target)
 
         return true
     }

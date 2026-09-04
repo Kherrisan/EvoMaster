@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.evomaster</groupId>
         <artifactId>evomaster-client-java</artifactId>
-        <version>4.0.1-SNAPSHOT</version>
+        <version>6.1.2-SNAPSHOT</version>
     </parent>
 
     <artifactId>evomaster-client-java-controller</artifactId>
@@ -123,6 +123,10 @@
             <artifactId>jsqlparser</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.antlr</groupId>
+            <artifactId>antlr4-runtime</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-engine</artifactId>
         </dependency>
@@ -138,6 +142,13 @@
             <groupId>org.hamcrest</groupId>
             <artifactId>hamcrest-all</artifactId>
             <scope>provided</scope>
+        </dependency>
+
+        <!-- Needed for DynamoDb parsing, fixing version to latest one compatible with Java 8, don't upgrade to 4.10 -->
+        <dependency>
+            <groupId>org.antlr</groupId>
+            <artifactId>antlr4-runtime</artifactId>
+            <version>4.9.3</version>
         </dependency>
 
         <dependency>
@@ -190,6 +201,11 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>org.apache.cassandra</groupId>
+            <artifactId>java-driver-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.mongodb</groupId>
             <artifactId>bson</artifactId>
             <scope>test</scope>
@@ -200,8 +216,24 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>org.apache.cassandra</groupId>
+            <artifactId>java-driver-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>io.lettuce</groupId>
             <artifactId>lettuce-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>dynamodb</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Some third-party library we use in our test scaffolding might need SLF4j (i.e., Docker) -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
             <scope>test</scope>
         </dependency>
 
@@ -221,7 +253,6 @@
             <artifactId>grpc-stub</artifactId>
             <scope>test</scope>
         </dependency>
-
     </dependencies>
 
     <build>
@@ -257,6 +288,24 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+
+            <!-- Needed for DynamoDB parsing -->
+            <plugin>
+                <groupId>org.antlr</groupId>
+                <artifactId>antlr4-maven-plugin</artifactId>
+                <version>${antlr.version}</version>
+                <configuration>
+                    <listener>false</listener>
+                    <visitor>true</visitor>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>antlr4</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
 
             <!--
@@ -313,8 +362,8 @@
                                     <shadedPattern>shaded.javassist</shadedPattern>
                                 </relocation>
                                 <relocation>
-                                    <pattern>jersey</pattern>
-                                    <shadedPattern>shaded.jersey</shadedPattern>
+                                    <pattern>jersey.repackaged</pattern>
+                                    <shadedPattern>shaded.jersey.repackaged</shadedPattern>
                                 </relocation>
                                 <relocation>
                                     <pattern>org.aopalliance</pattern>
@@ -340,13 +389,16 @@
                                     <pattern>net.sf.jsqlparser</pattern>
                                     <shadedPattern>shaded.net.sf.jsqlparser</shadedPattern>
                                 </relocation>
+                                <relocation>
+                                    <pattern>org.antlr</pattern>
+                                    <shadedPattern>shaded.org.antlr</shadedPattern>
+                                </relocation>
                             </relocations>
                         </configuration>
                     </execution>
                 </executions>
             </plugin>
-
-        </plugins>
+          </plugins>
     </build>
 
 </project>

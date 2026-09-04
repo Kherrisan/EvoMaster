@@ -3,12 +3,13 @@ package org.evomaster.core.problem.graphql.service
 import com.webfuzzing.commons.faults.DefinedFaultCategory
 import org.evomaster.client.java.controller.api.dto.AdditionalInfoDto
 import org.evomaster.core.Lazy
-import org.evomaster.core.sql.SqlAction
+import org.evomaster.core.database.sql.SqlAction
 import org.evomaster.core.logging.LoggingUtil
 import org.evomaster.core.problem.enterprise.ExperimentalFaultCategory
 import org.evomaster.core.problem.graphql.*
 import org.evomaster.core.problem.httpws.auth.AuthUtils
 import org.evomaster.core.problem.httpws.service.HttpWsFitness
+import org.evomaster.core.remote.HttpClientFactory
 import org.evomaster.core.remote.TcpUtils
 import org.evomaster.core.search.action.ActionResult
 import org.evomaster.core.search.EvaluatedIndividual
@@ -18,7 +19,6 @@ import org.evomaster.core.taint.TaintAnalysis
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import javax.ws.rs.ProcessingException
-import javax.ws.rs.client.ClientBuilder
 import javax.ws.rs.client.Entity
 import javax.ws.rs.client.Invocation
 import javax.ws.rs.core.NewCookie
@@ -41,8 +41,9 @@ open class GraphQLFitness : HttpWsFitness<GraphQLIndividual>() {
 
         goingToStartExecutingNewTest()
 
-        val cookies = AuthUtils.getCookies(client, getBaseUrl(), individual)
-        val tokens = AuthUtils.getTokens(client, getBaseUrl(), individual)
+        val placeholders = AuthUtils.createUsers(client, getBaseUrl(), individual)
+        val cookies = AuthUtils.getCookies(client, getBaseUrl(), individual, placeholders)
+        val tokens = AuthUtils.getTokens(client, getBaseUrl(), individual, placeholders)
 
         val actionResults: MutableList<ActionResult> = mutableListOf()
 
@@ -308,7 +309,7 @@ open class GraphQLFitness : HttpWsFitness<GraphQLIndividual>() {
                         And while we are at it, let's release any hanging network resource
                      */
                     client.close() //make sure to release any resource
-                    client = ClientBuilder.newClient()
+                    client = HttpClientFactory.createTrustingJerseyClient(false, config.tcpTimeoutMs)
 
                     TcpUtils.handleEphemeralPortIssue()
 
@@ -354,7 +355,7 @@ open class GraphQLFitness : HttpWsFitness<GraphQLIndividual>() {
             }
         } catch (e: Exception) {
 
-            if (e is ProcessingException && TcpUtils.isTimeout(e)) {
+            if (e is ProcessingException && (TcpUtils.isTimeout(e))) {
                 gqlcr.setTimedout(true)
                 statistics.reportTimeout()
                 return false

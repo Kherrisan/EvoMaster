@@ -10,7 +10,6 @@ import org.evomaster.core.problem.api.param.Param
 import org.evomaster.core.problem.enterprise.EnterpriseActionResult
 import org.evomaster.core.problem.httpws.HttpWsAction
 import org.evomaster.core.problem.httpws.HttpWsCallResult
-import org.evomaster.core.problem.rest.builder.RestActionBuilderV3
 import org.evomaster.core.problem.rest.data.RestCallAction
 import org.evomaster.core.problem.rest.data.RestCallResult
 import org.evomaster.core.problem.rest.data.RestIndividual
@@ -24,14 +23,11 @@ import org.evomaster.core.search.action.Action
 import org.evomaster.core.search.action.ActionResult
 import org.evomaster.core.search.EvaluatedIndividual
 import org.evomaster.core.search.Individual
-import org.evomaster.core.search.gene.collection.EnumGene
-import org.evomaster.core.search.gene.interfaces.NamedExamplesGene
+import org.evomaster.core.search.gene.interfaces.UserExamplesGene
 import org.evomaster.core.search.gene.utils.GeneUtils
-import org.evomaster.core.search.gene.wrapper.ChoiceGene
 import org.evomaster.core.utils.StringUtils
 import org.slf4j.LoggerFactory
 import java.nio.file.Path
-import java.util.*
 
 class RestTestCaseWriter : HttpWsTestCaseWriter {
 
@@ -75,17 +71,27 @@ class RestTestCaseWriter : HttpWsTestCaseWriter {
         lines: Lines,
         baseUrlOfSut: String,
         ind: EvaluatedIndividual<*>,
-        insertionVars: MutableList<Pair<String, String>>,
+        sqlInsertionVars: MutableList<Pair<String, String>>,
+        mongoInsertionVars: MutableList<Pair<String, String>>,
+        redisInsertionVars: MutableList<Pair<String, String>>,
         testName: String
     ) {
-        super.handleTestInitialization(lines, baseUrlOfSut, ind, insertionVars,testName)
+        super.handleTestInitialization(lines,
+            baseUrlOfSut,
+            ind,
+            sqlInsertionVars,
+            mongoInsertionVars,
+            redisInsertionVars,
+            testName)
     }
 
     override fun handleActionCalls(
             lines: Lines,
             baseUrlOfSut: String,
             ind: EvaluatedIndividual<*>,
-            insertionVars: MutableList<Pair<String, String>>,
+            sqlInsertionVars: MutableList<Pair<String, String>>,
+            mongoInsertionVars: MutableList<Pair<String, String>>,
+            redisInsertionVars: MutableList<Pair<String, String>>,
             testCaseName: String,
             testSuitePath: Path?
     ) {
@@ -101,22 +107,29 @@ class RestTestCaseWriter : HttpWsTestCaseWriter {
                             lines,
                             ind.individual.seeSqlDbActions(),
                             groupIndex = index.toString(),
-                            insertionVars = insertionVars,
+                            sqlInsertionVars = sqlInsertionVars,
                             skipFailure = config.skipFailureSQLInTestFile
                         )
                     //actions
                     c.second.forEach { a ->
                         val exeuctionIndex = ind.individual.seeMainExecutableActions().indexOf(a.action)
-                        handleSingleCall(a, exeuctionIndex, ind.fitness, lines, testCaseName, testSuitePath, baseUrlOfSut)
+                        handleSingleCall(a, exeuctionIndex, ind.fitness, lines, testCaseName, testSuitePath, baseUrlOfSut, false)
                     }
                 }
             }else{
+                val isSQLi = hasSQLi(ind)
                 ind.evaluatedMainActions().forEachIndexed { index, evaluatedAction ->
-                    handleSingleCall(evaluatedAction, index, ind.fitness, lines, testCaseName, testSuitePath, baseUrlOfSut)
+                  handleSingleCall(evaluatedAction, index, ind.fitness, lines, testCaseName, testSuitePath, baseUrlOfSut, addTimeMeasurement = isSQLi)
                 }
             }
 
         }
+    }
+
+    private fun hasSQLi(ind: EvaluatedIndividual<*>): Boolean {
+        return ind.evaluatedMainActions().any { evaluatedAction ->
+                (evaluatedAction.result as HttpWsCallResult).getVulnerableForSQLI()
+            }
     }
 
     protected fun locationVar(id: String): String {
@@ -214,14 +227,26 @@ class RestTestCaseWriter : HttpWsTestCaseWriter {
         val call = _call as RestCallAction
         val verb = call.verb.name.lowercase()
 
-        if (format.isCsharp()) {
-            lines.append(".${StringUtils.capitalization(verb)}Async(")
-        } else {
-            if (verb == "trace" && format.isJavaOrKotlin()) {
-                //currently, RestAssured does not have a trace() method
-                lines.add(".request(io.restassured.http.Method.TRACE, ")
-            } else {
-                lines.add(".$verb(")
+        when {
+            format.isPlaywright() -> {
+                val verbToUse = call.verb.name.lowercase()
+                // Playwright provides direct helpers for common verbs. For the rest, use fetch with explicit method.
+                val hasDirectHelper = setOf("get", "post", "put", "patch", "delete", "head").contains(verbToUse)
+                if (!hasDirectHelper) {
+                    lines.add("await request.fetch(")
+                } else {
+                    lines.add("await request.$verbToUse(")
+                }
+                // Note: the options object is appended in HttpWsTestCaseWriter.makeHttpCall.
+            }
+            format.isCsharp() -> lines.append(".${StringUtils.capitalization(verb)}Async(")
+            else -> {
+                if (verb == "trace" && format.isJavaOrKotlin()) {
+                    //currently, RestAssured does not have a trace() method
+                    lines.add(".request(io.restassured.http.Method.TRACE, ")
+                } else {
+                    lines.add(".$verb(")
+                }
             }
         }
 
@@ -300,25 +325,17 @@ class RestTestCaseWriter : HttpWsTestCaseWriter {
                 if (bodyParam != null) {
                     lines.append(", data=body")
                 }
-                if(config.testTimeout > 0) {
+                if(config.tcpTimeoutMs > 0) {
                     /*
-                        As timeout at test level does not work reliably in Python, we do timeout as well in each HTTP call.
+                        Client timeout per HTTP call, same source as fuzzing tcpTimeoutMs.
+                        Also, timeout at test level does not work reliably in Python.
                     */
-                    lines.append(", timeout=${config.testTimeout}")
+                    lines.append(", timeout=${TestSuiteWriter.httpTimeoutVarSeconds}")
                 }
             }
         }
 
-//        if (format.isCsharp()) {
-//            if (isVerbWithPossibleBodyPayload(verb)) {
-//                lines.append(", ")
-//                handleBody(call, lines)
-//            }
-//            lines.append(");")
-//        } else {
-
         lines.append(")")
-//        }
     }
 
     private fun handleQuery(queryPair: String, replacements: Map<String, RestLinkParameter>) : String{
@@ -379,78 +396,87 @@ class RestTestCaseWriter : HttpWsTestCaseWriter {
 
 
     private fun handleLocationHeader(call: RestCallAction, res: RestCallResult, resVarName: String, lines: Lines) {
-        if (call.saveCreatedResourceLocation && !res.stopping) {
-
-            if (!res.getHeuristicsForChainedLocation()) {
-
-                //using what present in the "location" HTTP header
-
-                val location = locationVar(call.creationLocationId())
-
-                /*
-                    If there is a "location" header, then it must be either empty or a valid URI.
-                    If that is not the case, it would be a bug.
-                    But we do not really handle it as "found fault" during the search.
-                    Plus the test should not fail, although clearly a bug.
-                    But in any case, if invalid URL, following HTTP calls would fail anyway
-
-                    FIXME: should handle it as an extra oracle during the search
-                 */
-
-                when {
-                    format.isJavaOrKotlin() -> {
-                        val extract = "$resVarName.extract().header(\"location\")"
-                        if(format.isJava()){
-                            lines.add("String ")
-                        } else {
-                            lines.add("val ")
-                        }
-                        lines.append("$location = $extract")
-                        lines.appendSemicolon()
-                        lines.add("assertTrue(isValidURIorEmpty($location));")
-                    }
-                    format.isJavaScript() -> {
-                        lines.add("const $location = $resVarName.header['location'];")
-                        val validCheck = "${TestSuiteWriter.jsImport}.isValidURIorEmpty($location)"
-                        lines.add("expect($validCheck).toBe(true);")
-                    }
-                    format.isCsharp() -> {
-                        lines.add("Assert.True(Uri.IsWellFormedUriString($location, UriKind.Absolute) || string.IsNullOrEmpty($location));")
-                    }
-                    format.isPython() -> {
-                        lines.add("$location = $resVarName.headers['location']")
-                        val validCheck = "is_valid_uri_or_empty($location)"
-                        lines.add("assert $validCheck")
-                    }
-                }
-            } else {
-
-                //trying to infer linked ids from HTTP response
-
-                val baseUri: String = if (call.usePreviousLocationId != null) {
-                    /* A variable should NOT be enclosed by quotes */
-                    locationVar(call.usePreviousLocationId!!)
-                } else {
-                    /* Literals should be enclosed by quotes */
-                    val path = callGraphService.resolveLocationForParentOfChildOperationUsingCreatedResource(call)
-                    "\"$path\""
-                }
-
-                //FIXME this should be same algorithm as in AbstractRestFitness
-                val idPointer = res.getResourceId()?.pointer ?: "/id"
-
-                val extract = extractValueFromJsonResponse(resVarName, idPointer)
-
-                when{
-                    format.isJavaScript() -> lines.add("const ")
-                    format.isJava() -> lines.add("String ")
-                    format.isKotlin() -> lines.add("val ")
-                    format.isPython()  -> lines.add("")/* nothing to do in Python */
-                }
-                lines.append("${locationVar(call.creationLocationId())} = $baseUri + \"/\" + $extract")
-                lines.appendSemicolon()
-            }
+        if (!call.saveCreatedResourceLocation || res.stopping) {
+            return
         }
+
+        if (!res.getHeuristicsForChainedLocation()) {
+            //using what present in the "location" HTTP header
+
+            val location = locationVar(call.creationLocationId())
+
+            /*
+                If there is a "location" header, then it must be either empty or a valid URI.
+                If that is not the case, it would be a bug.
+                But we do not really handle it as "found fault" during the search.
+                Plus the test should not fail, although clearly a bug.
+                But in any case, if invalid URL, following HTTP calls would fail anyway
+
+                FIXME: should handle it as an extra oracle during the search
+             */
+
+            when {
+                format.isJavaOrKotlin() -> {
+                    val extract = "$resVarName.extract().header(\"location\")"
+                    if (format.isJava()) {
+                        lines.add("String ")
+                    } else {
+                        lines.add("val ")
+                    }
+                    lines.append("$location = $extract")
+                    lines.appendSemicolon()
+                    lines.add("assertTrue(isValidURIorEmpty($location));")
+                }
+
+                format.isJavaScript() -> {
+                    val extract = if (format.isPlaywright()) {
+                        "$resVarName.headers()['location']"
+                    } else {
+                        "$resVarName.header['location']"
+                    }
+                    lines.add("const $location = $extract;")
+                    val validCheck = "${TestSuiteWriter.jsImport}.isValidURIorEmpty($location)"
+                    lines.add("expect($validCheck).toBe(true);")
+                }
+
+                format.isCsharp() -> {
+                    lines.add("Assert.True(Uri.IsWellFormedUriString($location, UriKind.Absolute) || string.IsNullOrEmpty($location));")
+                }
+
+                format.isPython() -> {
+                    lines.add("$location = $resVarName.headers['location']")
+                    val validCheck = "is_valid_uri_or_empty($location)"
+                    lines.add("assert $validCheck")
+                }
+            }
+        } else {
+
+            //trying to infer linked ids from HTTP response
+
+            val baseUri: String = if (call.usePreviousLocationId != null) {
+                /* A variable should NOT be enclosed by quotes */
+                locationVar(call.usePreviousLocationId!!)
+            } else {
+                /* Literals should be enclosed by quotes */
+                val path = callGraphService.resolveLocationForParentOfChildOperationUsingCreatedResource(call)
+                "\"$path\""
+            }
+
+            //FIXME this should be same algorithm as in AbstractRestFitness
+            val idPointer = res.getResourceId()?.pointer ?: "/id"
+
+            val extract = extractValueFromJsonResponse(resVarName, idPointer)
+
+            when {
+                format.isJavaScript() -> lines.add("const ")
+                format.isJava() -> lines.add("String ")
+                format.isKotlin() -> lines.add("val ")
+                format.isPython() -> lines.add("")/* nothing to do in Python */
+            }
+            lines.append("${locationVar(call.creationLocationId())} = $baseUri + \"/\" + $extract")
+            lines.appendSemicolon()
+        }
+
     }
 
     override fun addTestCommentBlock(lines: Lines, test: TestCase) {
@@ -547,11 +573,10 @@ class RestTestCaseWriter : HttpWsTestCaseWriter {
 
 
     private fun getAllUsedExamples(ind: RestIndividual) : List<String>{
-        return ind.seeFullTreeGenes()
-            .filter { it.name == RestActionBuilderV3.EXAMPLES_NAME }
-            .filter { it.staticCheckIfImpactPhenotype() }
+        return ind.getAllActiveUsedExamples()
             .map {
-                val name = if(it is NamedExamplesGene){
+                val name = if(it is UserExamplesGene){
+                    //always true
                     "(${it.getValueName()?: "-"}) "
                 } else {
                     ""

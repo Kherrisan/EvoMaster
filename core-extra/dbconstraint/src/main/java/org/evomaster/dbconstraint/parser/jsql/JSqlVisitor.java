@@ -13,6 +13,15 @@ import net.sf.jsqlparser.statement.select.ParenthesedSelect;
 import net.sf.jsqlparser.statement.select.Select;
 import org.evomaster.dbconstraint.ast.*;
 
+import java.math.BigInteger;
+import java.sql.Timestamp;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.temporal.ChronoField;
+import java.time.temporal.TemporalAccessor;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -23,6 +32,62 @@ public class JSqlVisitor implements ExpressionVisitor {
     private static final String SIMILAR_TO = "similar_to";
     private static final String SIMILAR_ESCAPE = "similar_escape";
     private static final String SIMILAR_TO_ESCAPE = "similar_to_escape";
+
+    private static final String LOWER = "LOWER";
+    private static final String UPPER = "UPPER";
+
+    private static final String ANY = "ANY";
+    private static final String SOME = "SOME";
+
+    private static final String SINGLE_QUOTE_CHAR = "'";
+
+    /**
+     * Accepts the timestamp layouts a database or an ORM actually emits, rather than a single one.
+     *
+     * The date is mandatory; everything after it is optional. The time may be separated by a space
+     * or by the ISO 'T', may omit the seconds, and may carry a fractional part of any precision. A
+     * trailing UTC offset is honoured in either the "+HH:mm"/"Z" or the "+HH" spelling.
+     *
+     * Widening this matters more than it looks: when a literal cannot be read, the resulting
+     * exception makes the caller drop the *whole* WHERE clause, including the conditions it could
+     * otherwise have translated. An ORM emits sub-second precision whenever it compares a column
+     * against the current instant, so the narrow form lost entire clauses routinely.
+     *
+     * The fractional part is parsed but not used: the result is expressed in whole epoch seconds,
+     * matching the decoder in SMTLibZ3DbConstraintSolver.
+     */
+    /**
+     * The time of day, with everything after the hour and minute optional. Built separately so it can
+     * be attached to each separator as a unit: were the separator and the time independently
+     * optional, a literal consisting of a date and a stray separator would satisfy the pattern and be
+     * silently read as midnight.
+     */
+    private static final DateTimeFormatter TIME_OF_DAY = new DateTimeFormatterBuilder()
+            .appendPattern("HH:mm")
+            .optionalStart().appendPattern(":ss").optionalEnd()
+            .optionalStart().appendFraction(ChronoField.NANO_OF_SECOND, 1, 9, true).optionalEnd()
+            .optionalStart().appendOffset("+HH:MM", "Z").optionalEnd()
+            .optionalStart().appendOffset("+HH", "Z").optionalEnd()
+            .toFormatter();
+
+    private static DateTimeFormatter timeAfter(char separator) {
+        return new DateTimeFormatterBuilder()
+                .appendLiteral(separator)
+                .append(TIME_OF_DAY)
+                .toFormatter();
+    }
+
+    private static final DateTimeFormatter TIMESTAMP_PARSER = new DateTimeFormatterBuilder()
+            .appendPattern("yyyy-MM-dd")
+            // Either separator, each carrying the whole time of day with it, so that neither can
+            // appear without one. A date on its own remains valid; a date with a dangling separator,
+            // or with an offset but no time, does not.
+            .appendOptional(timeAfter('T'))
+            .appendOptional(timeAfter(' '))
+            .parseDefaulting(ChronoField.HOUR_OF_DAY, 0)
+            .parseDefaulting(ChronoField.MINUTE_OF_HOUR, 0)
+            .parseDefaulting(ChronoField.SECOND_OF_MINUTE, 0)
+            .toFormatter();
 
     private final Deque<SqlCondition> stack = new ArrayDeque<>();
 
@@ -45,7 +110,14 @@ public class JSqlVisitor implements ExpressionVisitor {
 
     @Override
     public void visit(Function function) {
-        // TODO This translation should be implemented
+        String name = function.getName().toUpperCase();
+        if ((name.equals(LOWER) || name.equals(UPPER))
+                && function.getParameters() != null
+                && function.getParameters().size() == 1) {
+            // Treat LOWER(col)/UPPER(col) as the column itself (case-folding is dropped as an approximation)
+            function.getParameters().get(0).accept(this);
+            return;
+        }
         throw new RuntimeException("Extraction of condition not yet implemented");
     }
 
@@ -113,8 +185,10 @@ public class JSqlVisitor implements ExpressionVisitor {
 
     @Override
     public void visit(TimestampValue timestampValue) {
-        // TODO This translation should be implemented
-        throw new RuntimeException("Extraction of condition not yet implemented");
+        // Treat the timestamp string as UTC so the epoch round-trips consistently with the
+        // UTC-based decoder in SMTLibZ3DbConstraintSolver (LocalDateTime.ofInstant(..., UTC)).
+        long epochSeconds = timestampValue.getValue().toLocalDateTime().toEpochSecond(ZoneOffset.UTC);
+        stack.push(new SqlBigIntegerLiteralValue(BigInteger.valueOf(epochSeconds)));
     }
 
     @Override
@@ -127,7 +201,7 @@ public class JSqlVisitor implements ExpressionVisitor {
         String notEscapedValue = stringValue.getNotExcapedValue();
 
         String notEscapedValueNoQuotes;
-        if (notEscapedValue.startsWith("'") && notEscapedValue.endsWith("'")) {
+        if (notEscapedValue.startsWith(SINGLE_QUOTE_CHAR) && notEscapedValue.endsWith(SINGLE_QUOTE_CHAR)) {
             notEscapedValueNoQuotes = notEscapedValue.substring(1, notEscapedValue.length() - 1);
         } else {
             notEscapedValueNoQuotes = notEscapedValue;
@@ -225,9 +299,57 @@ public class JSqlVisitor implements ExpressionVisitor {
     public void visit(EqualsTo equalsTo) {
         equalsTo.getLeftExpression().accept(this);
         SqlCondition left = stack.pop();
+
+        ArrayConstructor alternatives = membershipArrayOf(equalsTo.getRightExpression());
+        if (alternatives != null) {
+            /*
+             * "col = ANY (ARRAY['A','B'])" is a membership test, equivalent to
+             * "col IN ('A','B')", so it is translated to the node that already means that.
+             */
+            if (!(left instanceof SqlColumn)) {
+                throw new RuntimeException("Extraction of condition not yet implemented");
+            }
+            alternatives.accept(this);
+            SqlConditionList literals = (SqlConditionList) stack.pop();
+            stack.push(new SqlInCondition((SqlColumn) left, literals));
+            return;
+        }
+
         equalsTo.getRightExpression().accept(this);
         SqlCondition right = stack.pop();
+        if (right instanceof SqlConditionList) {
+            /*
+             * A bare "col = ARRAY[...]" compares a value against an array rather than testing
+             * membership in it, and there is no node for that. Reading it as an IN would answer a
+             * different question than the constraint asks, so it is left untranslated.
+             */
+            throw new RuntimeException("Extraction of condition not yet implemented");
+        }
         stack.push(new SqlComparisonCondition(left, SqlComparisonOperator.EQUALS_TO, right));
+    }
+
+    /**
+     * The array of alternatives in a membership test, or null if the expression is not one.
+     *
+     * <p>Only {@code ANY} and {@code SOME} qualify, and only over an array literal. {@code ALL}
+     * requires every element to match rather than one, and {@code ANY} over a subquery carries no
+     * literals to enumerate, so neither can be answered with an {@code IN}.
+     */
+    private static ArrayConstructor membershipArrayOf(Expression expression) {
+        if (!(expression instanceof Function)) {
+            return null;
+        }
+        Function function = (Function) expression;
+        String name = function.getName().toUpperCase();
+        if (!name.equals(ANY) && !name.equals(SOME)) {
+            return null;
+        }
+        ExpressionList<?> parameters = function.getParameters();
+        if (parameters == null || parameters.size() != 1
+                || !(parameters.get(0) instanceof ArrayConstructor)) {
+            return null;
+        }
+        return (ArrayConstructor) parameters.get(0);
     }
 
 
@@ -254,8 +376,22 @@ public class JSqlVisitor implements ExpressionVisitor {
         inExpression.getLeftExpression().accept(this);
         SqlColumn left = (SqlColumn) stack.pop();
         inExpression.getRightExpression().accept(this);
-        SqlConditionList right = (SqlConditionList) stack.pop();
+        SqlConditionList right = unwrapSingletonArray((SqlConditionList) stack.pop());
         stack.push(new SqlInCondition(left, right));
+    }
+
+    /**
+     * Flattens the one nested level that {@code IN (ARRAY[...])} produces.
+     *
+     * <p>The parenthesis around the array is itself an expression list, so the array's elements
+     * arrive wrapped in a list of one. The alternatives are the elements, not the array.
+     */
+    private static SqlConditionList unwrapSingletonArray(SqlConditionList list) {
+        List<SqlCondition> elements = list.getSqlConditionExpressions();
+        if (elements.size() == 1 && elements.get(0) instanceof SqlConditionList) {
+            return (SqlConditionList) elements.get(0);
+        }
+        return list;
     }
 
     @Override
@@ -310,8 +446,11 @@ public class JSqlVisitor implements ExpressionVisitor {
 
     @Override
     public void visit(NotEqualsTo notEqualsTo) {
-        // TODO This translation should be implemented
-        throw new RuntimeException("Extraction of condition not yet implemented");
+        notEqualsTo.getLeftExpression().accept(this);
+        SqlCondition left = stack.pop();
+        notEqualsTo.getRightExpression().accept(this);
+        SqlCondition right = stack.pop();
+        stack.push(new SqlComparisonCondition(left, SqlComparisonOperator.NOT_EQUALS_TO, right));
     }
 
     @Override
@@ -596,7 +735,20 @@ public class JSqlVisitor implements ExpressionVisitor {
 
     @Override
     public void visit(DateTimeLiteralExpression dateTimeLiteralExpression) {
-        // TODO This translation should be implemented
+        if (dateTimeLiteralExpression.getType() == DateTimeLiteralExpression.DateTime.TIMESTAMP) {
+            String value = dateTimeLiteralExpression.getValue();
+            if (value.startsWith(SINGLE_QUOTE_CHAR) && value.endsWith(SINGLE_QUOTE_CHAR)) {
+                value = value.substring(1, value.length() - 1);
+            }
+            TemporalAccessor parsed = TIMESTAMP_PARSER.parse(value);
+            // An explicit offset is honoured; without one, treat the literal as UTC to match the
+            // UTC-based decoder in SMTLibZ3DbConstraintSolver (LocalDateTime.ofInstant(..., UTC)).
+            long epochSeconds = parsed.isSupported(ChronoField.OFFSET_SECONDS)
+                    ? OffsetDateTime.from(parsed).toEpochSecond()
+                    : LocalDateTime.from(parsed).toEpochSecond(ZoneOffset.UTC);
+            stack.push(new SqlBigIntegerLiteralValue(BigInteger.valueOf(epochSeconds)));
+            return;
+        }
         throw new RuntimeException("Extraction of condition not yet implemented");
     }
 
@@ -630,10 +782,15 @@ public class JSqlVisitor implements ExpressionVisitor {
         throw new RuntimeException("Extraction of condition not yet implemented");
     }
 
+    /**
+     * An array literal, e.g. {@code ARRAY['A','B']}, becomes the list of its elements: the same
+     * {@link SqlConditionList} that {@link #visit(ExpressionList)} builds for the right-hand side of
+     * an {@code IN}. What that list means is decided by whoever consumes it, since an array is a
+     * value in its own right and only membership tests turn it into a set of alternatives.
+     */
     @Override
     public void visit(ArrayConstructor aThis) {
-        // TODO This translation should be implemented
-        throw new RuntimeException("Extraction of condition not yet implemented");
+        aThis.getExpressions().accept(this);
     }
 
     @Override

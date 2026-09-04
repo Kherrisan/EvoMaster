@@ -18,6 +18,7 @@ import org.evomaster.core.search.algorithms.onemax.OneMaxSampler
 import org.evomaster.core.search.service.monitor.SearchOverall
 import org.evomaster.core.search.service.monitor.SearchProcessMonitor
 import org.evomaster.core.search.service.monitor.StepOfSearchProcess
+import org.evomaster.core.search.service.time.ExecutionPhaseController
 import org.hamcrest.CoreMatchers.containsString
 import org.hamcrest.CoreMatchers.not
 import org.hamcrest.MatcherAssert.assertThat
@@ -45,7 +46,7 @@ class ProcessMonitorTest{
     fun init(){
 
         val injector: Injector = LifecycleInjector.builder()
-                .withModules(* arrayOf<Module>(OneMaxModule(), BaseModule()))
+                .withModules(* arrayOf<Module>(OneMaxModule(), BaseModule(arrayOf("--blackBox","false"))))
                 .build().createInjector()
 
 
@@ -71,25 +72,34 @@ class ProcessMonitorTest{
 
     @Test
     fun testDisableProcessMonitor(){
+        val output = Files.createTempDirectory("process-monitor-disabled-")
+        val marker = output.resolve("marker")
+        Files.createFile(marker)
 
-        config.enableProcessMonitor = false
-        config.showProgress = true
+        try {
+            config.processFiles = output.toString()
+            config.enableProcessMonitor = false
+            config.showProgress = true
 
-        processMonitor.postConstruct()
-        assertFalse(Files.exists(Paths.get(config.processFiles)))
+            processMonitor.postConstruct()
+            assertTrue(Files.exists(marker))
 
-        val a = OneMaxIndividual(2)
-        TestUtils.doInitializeIndividualForTesting(a,randomness)
-        a.setValue(0, 1.0)
+            val a = OneMaxIndividual(2)
+            TestUtils.doInitializeIndividualForTesting(a,randomness)
+            a.setValue(0, 1.0)
 
-        val eval = ff.calculateCoverage(a, modifiedSpec = null)!!
-        processMonitor.eval = eval
-        processMonitor.newActionEvaluated()
+            val eval = ff.calculateCoverage(a, modifiedSpec = null)!!
+            processMonitor.eval = eval
+            processMonitor.newActionsEvaluated(1)
 
-        val added = archive.addIfNeeded(eval)
-        processMonitor.record(added, true, eval)
+            val added = archive.addIfNeeded(eval)
+            processMonitor.record(added, true, eval)
 
-        assertFalse(Files.exists(Paths.get(config.processFiles)))
+            assertTrue(Files.exists(marker))
+        } finally {
+            Files.deleteIfExists(marker)
+            Files.deleteIfExists(output)
+        }
     }
 
     @Test
@@ -109,7 +119,7 @@ class ProcessMonitorTest{
 
         val eval = ff.calculateCoverage(a, modifiedSpec = null)!!
         processMonitor.eval = eval
-        processMonitor.newActionEvaluated()
+        processMonitor.newActionsEvaluated(1)
 
         val added = archive.addIfNeeded(eval)
 
@@ -138,7 +148,7 @@ class ProcessMonitorTest{
 
         val eval = ff.calculateCoverage(individual, modifiedSpec = null)!!
         processMonitor.eval = eval
-        processMonitor.newActionEvaluated()
+        processMonitor.newActionsEvaluated(1)
 
         val added = archive.addIfNeeded(eval)
 
@@ -157,7 +167,7 @@ class ProcessMonitorTest{
                 thus, currently, the serialized process data could only contain fitness info and impact info
              */
 //            assertEquals(individual.seeGenes().size, evalIndividual.individual.seeGenes().size)
-            assertEquals(evalIndividual.fitness.coveredTargets(), evalIndividual.fitness.coveredTargets())
+            assertEquals(evalIndividual.fitness.numberOfCoveredTargets(), evalIndividual.fitness.numberOfCoveredTargets())
             evalIndividual.fitness.getViewOfData().forEach { (t, u) ->
                 assertEquals(evalIndividual.fitness.getHeuristic(t) , u.score)
             }
@@ -186,7 +196,7 @@ class ProcessMonitorTest{
         a.setValue(0, 1.0)
         val evalA = ff.calculateCoverage(a, modifiedSpec = null)!!
         processMonitor.eval = evalA
-        processMonitor.newActionEvaluated()
+        processMonitor.newActionsEvaluated(1)
 
         val addedA = archive.addIfNeeded(evalA)
         assert(addedA)
@@ -198,7 +208,7 @@ class ProcessMonitorTest{
         b.setValue(1, 1.0)
         val evalB = ff.calculateCoverage(b, modifiedSpec = null)!!
         processMonitor.eval = evalB
-        processMonitor.newActionEvaluated()
+        processMonitor.newActionsEvaluated(1)
 
         val addedB = archive.addIfNeeded(evalB)
 
@@ -249,7 +259,7 @@ class ProcessMonitorTest{
         assertFalse(Files.exists(Paths.get(config.processFiles)))
         assertFalse(Files.exists(Paths.get(processMonitor.getStepDirAsPath())))
 
-        epc.startSearch()
+        epc.markStartingSearch()
         mio.search()
 
 
@@ -276,7 +286,7 @@ class ProcessMonitorTest{
 
         val evalA = ff.calculateCoverage(a, modifiedSpec = null)!!
         processMonitor.eval = evalA
-        processMonitor.newActionEvaluated()
+        processMonitor.newActionsEvaluated(1)
 
         val addedA = archive.addIfNeeded(evalA)
 
@@ -310,7 +320,7 @@ class ProcessMonitorTest{
 
         val evalA = ff.calculateCoverage(a, modifiedSpec = null)!!
         processMonitor.eval = evalA
-        processMonitor.newActionEvaluated()
+        processMonitor.newActionsEvaluated(1)
 
         val addedA = archive.addIfNeeded(evalA)
 

@@ -4,7 +4,11 @@ package org.evomaster.core.search
 import org.evomaster.client.java.controller.api.dto.BootTimeInfoDto
 import org.evomaster.client.java.controller.api.dto.TargetInfoDto
 import org.evomaster.client.java.instrumentation.shared.ObjectiveNaming
+import org.evomaster.core.EMConfig
 import org.evomaster.core.search.service.IdMapper
+import org.evomaster.core.database.sql.DatabaseExecution
+import org.evomaster.core.database.sql.SqlExecutionInfo
+import org.evomaster.core.database.sql.schema.TableId
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -67,7 +71,7 @@ class FitnessValueTest {
         fv.coverTarget(4) //line
         fv.coverTarget(-12)
 
-        assertEquals(6, fv.coveredTargets())
+        assertEquals(6, fv.numberOfCoveredTargets())
 
         var linesInfo = fv.unionWithBootTimeCoveredTargets(ObjectiveNaming.LINE, idMapper, null)
         assertEquals(3, linesInfo.total)
@@ -121,6 +125,148 @@ class FitnessValueTest {
         assertEquals(4, linesInfo.total)
         assertEquals(2, linesInfo.bootTime)
         assertEquals(3, linesInfo.searchTime)
+    }
+
+    @Test
+    fun testAggregatedFailedWhereQueriesOnlyFromExecutionsWithFailedWhere() {
+        val fv = FitnessValue(1.0)
+
+        val tableId = TableId("foo")
+
+        // Execution that has a failing WHERE clause — its queries should be collected
+        val executionWithFailedWhere = DatabaseExecution(
+            queriedData = emptyMap(),
+            updatedData = emptyMap(),
+            insertedData = emptyMap(),
+            failedWhere = mapOf(tableId to setOf("id")),
+            deletedData = emptyList(),
+            numberOfSqlCommands = 1,
+            sqlParseFailureCount = 0,
+            executionInfo = listOf(
+                SqlExecutionInfo("SELECT * FROM foo WHERE id = 1", false, 10L)
+            )
+        )
+
+        // Execution with no failing WHERE clause — its queries must NOT be collected,
+        // even though it has executionInfo entries
+        val executionWithoutFailedWhere = DatabaseExecution(
+            queriedData = emptyMap(),
+            updatedData = emptyMap(),
+            insertedData = emptyMap(),
+            failedWhere = emptyMap(),
+            deletedData = emptyList(),
+            numberOfSqlCommands = 1,
+            sqlParseFailureCount = 0,
+            executionInfo = listOf(
+                SqlExecutionInfo("INSERT INTO bar VALUES (1)", false, 5L)
+            )
+        )
+
+        fv.setDatabaseExecution(0, executionWithFailedWhere)
+        fv.setDatabaseExecution(1, executionWithoutFailedWhere)
+        fv.aggregateDatabaseData()
+
+        val queries = fv.getViewOfAggregatedFailedWhereQueries()
+        assertEquals(1, queries.size)
+        assertTrue(queries.contains("SELECT * FROM foo WHERE id = 1"))
+    }
+
+    @Test
+    fun testAggregatedFailedWhereQueriesOnlyIncludesCommandsReferencingFailedTable() {
+        val fv = FitnessValue(1.0)
+
+        val failedTable = TableId("foo")
+
+        // Execution with failedWhere on "foo"; executionInfo has two commands —
+        // one referencing "foo" (relevant) and one referencing "bar" (irrelevant)
+        val execution = DatabaseExecution(
+            queriedData = emptyMap(),
+            updatedData = emptyMap(),
+            insertedData = emptyMap(),
+            failedWhere = mapOf(failedTable to setOf("id")),
+            deletedData = emptyList(),
+            numberOfSqlCommands = 2,
+            sqlParseFailureCount = 0,
+            executionInfo = listOf(
+                SqlExecutionInfo("SELECT * FROM foo WHERE id = 1", false, 10L),
+                SqlExecutionInfo("INSERT INTO bar VALUES (1)", false, 5L)
+            )
+        )
+        fv.setDatabaseExecution(0, execution)
+        fv.aggregateDatabaseData()
+
+        val queries = fv.getViewOfAggregatedFailedWhereQueries()
+        assertEquals(1, queries.size)
+        assertTrue(queries.contains("SELECT * FROM foo WHERE id = 1"))
+        assertFalse(queries.contains("INSERT INTO bar VALUES (1)"))
+    }
+
+    @Test
+    fun testAggregatedFailedWhereQueriesExcludesBlankSqlCommands() {
+        val fv = FitnessValue(1.0)
+
+        val tableId = TableId("foo")
+
+        // JSQLParser >= 4.9 can produce empty-string SQL commands; they must be filtered out
+        // at the source in aggregateDatabaseData() rather than at every call site
+        val execution = DatabaseExecution(
+            queriedData = emptyMap(),
+            updatedData = emptyMap(),
+            insertedData = emptyMap(),
+            failedWhere = mapOf(tableId to setOf("id")),
+            deletedData = emptyList(),
+            numberOfSqlCommands = 3,
+            sqlParseFailureCount = 0,
+            executionInfo = listOf(
+                SqlExecutionInfo("SELECT * FROM foo WHERE id = 1", false, 10L),
+                SqlExecutionInfo("", false, 5L),
+                SqlExecutionInfo("   ", false, 5L)
+            )
+        )
+        fv.setDatabaseExecution(0, execution)
+        fv.aggregateDatabaseData()
+
+        val queries = fv.getViewOfAggregatedFailedWhereQueries()
+        assertEquals(1, queries.size)
+        assertTrue(queries.contains("SELECT * FROM foo WHERE id = 1"))
+    }
+
+    @Test
+    fun testAddExtraObjectivesToMinimize() {
+        val fv = FitnessValue(1.0)
+
+        // Adding list for actionIndex 0
+        fv.addExtraObjectivesToMinimize(0, listOf(5.0, 1.0, 3.0))
+        assertEquals(3.0, fv.averageExtraDistancesToMinimize(0), 1e-6)
+
+        // Adding more elements to actionIndex 0 - should merge and sort
+        fv.addExtraObjectivesToMinimize(0, listOf(2.0, 0.0))
+        // Elements for action 0: [0.0, 1.0, 2.0, 3.0, 5.0], average: (0+1+2+3+5)/5 = 2.2
+        assertEquals(2.2, fv.averageExtraDistancesToMinimize(0), 1e-6)
+
+        // Adding list for a different actionIndex (actionIndex 1)
+        fv.addExtraObjectivesToMinimize(1, listOf(10.0, 20.0))
+        assertEquals(15.0, fv.averageExtraDistancesToMinimize(1), 1e-6)
+
+        // Test comparison with another FitnessValue
+        val fv2 = FitnessValue(1.0)
+        fv2.addExtraObjectivesToMinimize(0, listOf(1.0, 2.0, 3.0))
+
+        val targetId = 0
+        fv.updateTarget(targetId, 0.5, actionIndex = 0)
+        fv2.updateTarget(targetId, 0.5, actionIndex = 0)
+
+        // For BEST_MIN:
+        // fv action 0 has sorted elements: [0.0, 1.0, 2.0, 3.0, 5.0]
+        // fv2 action 0 has sorted elements: [1.0, 2.0, 3.0]
+        // Since 0.0 < 1.0, fv is better (+1)
+        assertEquals(1, fv.compareExtraToMinimize(targetId, fv2, EMConfig.SecondaryObjectiveStrategy.BEST_MIN))
+        assertEquals(-1, fv2.compareExtraToMinimize(targetId, fv, EMConfig.SecondaryObjectiveStrategy.BEST_MIN))
+
+        // For AVG_DISTANCE:
+        // fv avg is 2.2, fv2 avg is 2.0 -> fv2 has smaller average distance, so fv2 is better (+1), fv is worse (-1)
+        assertEquals(-1, fv.compareExtraToMinimize(targetId, fv2, EMConfig.SecondaryObjectiveStrategy.AVG_DISTANCE))
+        assertEquals(1, fv2.compareExtraToMinimize(targetId, fv, EMConfig.SecondaryObjectiveStrategy.AVG_DISTANCE))
     }
 
 }

@@ -1,11 +1,12 @@
 package org.evomaster.core.output
 
 import org.evomaster.core.TestUtils
-import org.evomaster.core.sql.SqlAction
-import org.evomaster.core.sql.SqlActionResult
+import org.evomaster.core.database.sql.SqlAction
+import org.evomaster.core.database.sql.SqlActionResult
 import org.evomaster.core.output.EvaluatedIndividualBuilder.Companion.buildResourceEvaluatedIndividual
 import org.evomaster.core.output.service.PartialOracles
 import org.evomaster.core.output.service.RestTestCaseWriter
+import org.evomaster.core.output.service.TestSuiteWriter
 import org.evomaster.core.problem.enterprise.SampleType
 import org.evomaster.core.problem.rest.data.*
 import org.evomaster.core.search.EvaluatedIndividual
@@ -96,7 +97,7 @@ class PythonTestCaseWriterTest : WriterTestBase(){
             indent()
             add(".get(self.baseUrlOfSut + \"/\",")
             indent()
-            add("headers=headers)")
+            add("headers=headers, timeout=${TestSuiteWriter.httpTimeoutVarSeconds}, verify=False)")
             deindent()
             deindent()
             deindent()
@@ -167,7 +168,7 @@ class PythonTestCaseWriterTest : WriterTestBase(){
                 headers['Accept'] = "*/*"
                 res_0 = requests \
                         .get(self.baseUrlOfSut + "/foo",
-                            headers=headers)
+                            headers=headers, timeout=${TestSuiteWriter.httpTimeoutVarSeconds}, verify=False)
                 
                 assert res_0.status_code == 200
                 assert "application/json" in res_0.headers["content-type"]
@@ -241,7 +242,7 @@ class PythonTestCaseWriterTest : WriterTestBase(){
                 headers['Accept'] = "*/*"
                 res_0 = requests \
                         .get(self.baseUrlOfSut + "/foo",
-                            headers=headers)
+                            headers=headers, timeout=${TestSuiteWriter.httpTimeoutVarSeconds}, verify=False)
                 
                 assert res_0.status_code == 200
                 assert "application/json" in res_0.headers["content-type"]
@@ -300,7 +301,7 @@ class PythonTestCaseWriterTest : WriterTestBase(){
                 headers['Accept'] = "*/*"
                 res_0 = requests \
                         .get(self.baseUrlOfSut + "/foo",
-                            headers=headers)
+                            headers=headers, timeout=${TestSuiteWriter.httpTimeoutVarSeconds}, verify=False)
                 
                 assert res_0.status_code == 200
                 assert "application/json" in res_0.headers["content-type"]
@@ -310,4 +311,88 @@ class PythonTestCaseWriterTest : WriterTestBase(){
         assertEquals(expectedLines, lines.toString())
     }
 
+    @Test
+    fun testFlakyBodyObjectAssertion(){
+        val fooAction = RestCallAction("1", HttpVerb.GET, RestPath("/foo"), mutableListOf())
+
+        val (format, baseUrlOfSut, ei) = buildResourceEvaluatedIndividual(
+            dbInitialization = mutableListOf(),
+            groups = mutableListOf(
+                (mutableListOf<SqlAction>() to mutableListOf(fooAction))
+            ),
+            format = OutputFormat.PYTHON_UNITTEST
+        )
+
+        val fooResult = ei.seeResult(fooAction.getLocalId()) as RestCallResult
+        fooResult.setTimedout(false)
+        fooResult.setStatusCode(200)
+        fooResult.setBody("""
+           [
+                {},
+                {
+                    "id":"foo",
+                    "properties":[
+                        {},
+                        {
+                          "name":"mapProperty1",
+                          "type":"string",
+                          "value":"one"
+                        },
+                        {
+                          "name":"mapProperty2",
+                          "type":"string",
+                          "value":"two"
+                        }],
+                    "empty":{}
+                }
+           ]
+        """.trimIndent())
+        fooResult.setBodyType(MediaType.APPLICATION_JSON_TYPE)
+
+
+        val barResult = RestCallResult(fooAction.getLocalId())
+        barResult.setTimedout(false)
+        barResult.setStatusCode(500)
+        barResult.setBody("""
+           [
+                {},
+                {
+                    "id":"foo",
+                    "properties":[
+                        {},
+                        {
+                          "name":"flaky1",
+                          "type":"string",
+                          "value":"flaky2"
+                        },
+                        {
+                          "name":"mapProperty2",
+                          "type":"string",
+                          "value":"two"
+                        },
+                        {
+                          "name":"flaky3",
+                          "type":"string",
+                          "value":"two"
+                        }],
+                    "empty":{
+                        "flakyField4": 42
+                    }
+                }
+           ]
+        """.trimIndent())
+        barResult.setBodyType(MediaType.APPLICATION_JSON_TYPE)
+
+        fooResult.setFlakiness(barResult)
+
+        val config = getConfig(format)
+        config.handleFlakiness = true
+
+        val test = TestCase(test = ei, name = "test")
+
+        val writer = RestTestCaseWriter(config, PartialOracles())
+        val lines = writer.convertToCompilableTestCode( test, baseUrlOfSut)
+
+        assertEquals(5, getNumberOfFlakyComment(config,lines.toString()))
+    }
 }

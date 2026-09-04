@@ -1,18 +1,24 @@
 # EvoMaster: A Tool For Automatically Generating System-Level Test Cases
 
 
-![](docs/img/carl-cerstrand-136810_compressed.jpg  "Photo by Carl Cerstrand on Unsplash")
+[//]: # (![]&#40;docs/img/carl-cerstrand-136810_compressed.jpg  "Photo by Carl Cerstrand on Unsplash"&#41;)
 
 [![Maven Central](https://img.shields.io/maven-central/v/org.evomaster/evomaster-client-java.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/org.evomaster/evomaster-client-java)
 [![javadoc](https://javadoc.io/badge2/org.evomaster/evomaster-client-java-controller/javadoc.svg)](https://javadoc.io/doc/org.evomaster/evomaster-client-java-controller)
 ![CI](https://github.com/WebFuzzing/EvoMaster/workflows/CI/badge.svg)
 [![codecov](https://codecov.io/gh/WebFuzzing/EvoMaster/branch/master/graph/badge.svg)](https://codecov.io/gh/WebFuzzing/EvoMaster)
-[![DOI](https://zenodo.org/badge/92385933.svg)](https://zenodo.org/badge/latestdoi/92385933)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.5052036.svg)](https://doi.org/10.5281/zenodo.5052036)
 [![License: LGPL v3](https://img.shields.io/badge/License-LGPL_v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 [![Github All Releases](https://img.shields.io/github/downloads/WebFuzzing/evomaster/total.svg)](https://github.com/WebFuzzing/EvoMaster/releases)
 
 
+
 ### Summary
+
+[//]: # (<div style="float: left; margin-right: 15px; margin-bottom: 10px;">)
+<img align="left" src="docs/img/em_mascot.png" alt="AI-generated mascot, with Bing" width="100" />
+
+[//]: # (</div>)
 
 _EvoMaster_ ([www.evomaster.org](http://evomaster.org)) is the first (2016) open-source AI-driven tool
 that automatically *generates* system-level test cases
@@ -33,13 +39,23 @@ building on decades of research in the field of [Search-Based Software Testing](
 
 ### 1-Minute Example 
 
-On a console, copy&paste the following (requires _Docker_ installed).
-It will fuzz the PetClinic example API from Swagger, for 30 seconds, as shown in the following video. 
+Since version 6.0.0, the recommended way to install EvoMaster is through PyPi:
+
+`pip install evomaster`
+
+You can then run it on the command-line with `evomster <args>`, like for example:
+
+`evomaster --schema https://petstore.swagger.io/v2/swagger.json`
+
+It will fuzz the PetClinic example API from Swagger, for 60 seconds. 
+
+If you prefer, you can rather use Docker, as shown in the following video. 
 
 ```
-docker run -v "$(pwd)/generated_tests":/generated_tests webfuzzing/evomaster  --blackBox true --maxTime 30s  --ratePerMinute 60 --bbSwaggerUrl  https://petstore.swagger.io/v2/swagger.json
+docker run -v "$(pwd)/generated_tests":/generated_tests webfuzzing/evomaster  --schema  https://petstore.swagger.io/v2/swagger.json
 ```
 
+Note the video is old, using version 3.4.0, with some parameters that are no longer necessary. 
 
 ![](docs/img/evomaster_docker_use.gif)
 
@@ -50,19 +66,19 @@ Note that, depending on which shell and operating system you are using, you migh
 For example, if run in a MSYS shell on Windows like _Git Bash_, there is the need of an extra / before the $.
 
 ```
-docker run -v "/$(pwd)/generated_tests":/generated_tests webfuzzing/evomaster  --blackBox true --maxTime 30s  --ratePerMinute 60 --bbSwaggerUrl  https://petstore.swagger.io/v2/swagger.json
+docker run -v "/$(pwd)/generated_tests":/generated_tests webfuzzing/evomaster  --schema  https://petstore.swagger.io/v2/swagger.json
 ```
 
 If you are rather using a Command Prompt (Cmd.exe) terminal, you need to use `%CD%` instead of `$(pwd)` to refer to the current folder:
 
 ```
-docker run -v %CD%/generated_tests:/generated_tests webfuzzing/evomaster  --blackBox true --maxTime 30s  --ratePerMinute 60 --bbSwaggerUrl  https://petstore.swagger.io/v2/swagger.json
+docker run -v %CD%/generated_tests:/generated_tests webfuzzing/evomaster  --schema  https://petstore.swagger.io/v2/swagger.json
 ```
 
 On the other hand, on a PowerShell you need `${PWD}`:
 
 ```
-docker run -v ${PWD}/generated_tests:/generated_tests webfuzzing/evomaster  --blackBox true --maxTime 30s  --ratePerMinute 60 --bbSwaggerUrl  https://petstore.swagger.io/v2/swagger.json
+docker run -v ${PWD}/generated_tests:/generated_tests webfuzzing/evomaster  --schema  https://petstore.swagger.io/v2/swagger.json
 ```
 
 #### Troubleshooting
@@ -104,16 +120,13 @@ Note, since version 4.0.0, now _EvoMaster_ by default also creates an interactiv
   more effective test cases. We support JDK __8__ and the major LTS versions after that (currently JDK __21__). Might work on other JVM versions, but we provide __NO__ support for it.
   Note: there was initial support for other languages as well, like for example JavaScript/TypeScript and C#, but they were not in a stable, feature-complete state. The support for those languages for white-box testing has been dropped, at least for the time being. 
 
-* _Installation_: we provide installers for the main operating systems: _Windows_ (`.msi`),
-  _OSX_ (`.dmg`) and _Linux_ (`.deb`). We also provide an uber-fat JAR file.
-  To download them, see the [Release page](https://github.com/WebFuzzing/EvoMaster/releases).
+* _Installation_: the current recommended way to install EvoMaster is via PyPi, e.g., `pip install evomaster`. We also provide an uber-fat JAR file.
+  To download it, see the [Release page](https://github.com/WebFuzzing/EvoMaster/releases).
   Release notes are present in the file [release_notes.md](https://github.com/WebFuzzing/EvoMaster/blob/master/release_notes.md).
-  If you are using the uber-fat JAR, it should work with any major LTS version (from JDK 8 on).
-   Whereas for the client library, needed for white-box testing, we will support JDK 8 likely for a long, long while, be warned that future versions of the executable JAR might start to require higher versions of the JDK in a non-so-distant future.
-   If that is going to be higher than your current version of the JVM, if you cannot upgrade or have 2 different JDKs on your machine, then you should not use the uber-jar but rather one of the installers. 
-   When you use one of the installers, keep in mind that currently they do not update the `PATH` variable. This needs to be done manually, [see documentation](docs/download.md). 
-   Also keep in mind we have not paid the [Microsoft/Apple Tax](docs/download.md). This means that your operating system by default will block the installation, stating it cannot verify it is not a malware. 
-   But the block [can be bypassed](docs/download.md).
+  If you are using the uber-fat JAR, it should work with any major LTS version (from JDK 17 on).
+   Whereas for the client library, needed for white-box testing, we will support JDK 8 likely for a long, long while.
+  Note that  we provide as well installers for the main operating systems: _Windows_ (`.msi`), _OSX_ (`.dmg`) and _Linux_ (`.deb`).
+  Unfortunately, due to the  [Microsoft/Apple Tax](docs/download.md), those installers should be considered "deprecated", [see documentation](docs/download.md).
 
 * _Docker_: _EvoMaster_ is now released via Docker as well, under [webfuzzing/evomaster](https://hub.docker.com/r/webfuzzing/evomaster) on Docker Hub. For more information on how to use _EvoMaster_ via Docker, [see documentation](docs/docker.md).
 
@@ -123,10 +136,11 @@ Note, since version 4.0.0, now _EvoMaster_ by default also creates an interactiv
 
 * _State-of-the-art_: an [independent study (2022)](https://arxiv.org/abs/2204.08348), comparing 10 fuzzers on 20 RESTful APIs, shows that _EvoMaster_ gives the best results. Another [independent study (2024)](https://arxiv.org/abs/2410.12547) done by a different research group confirms these results.
 
-* _Schema_: REST APIs must provide a schema in [OpenAPI/Swagger](https://swagger.io)
-  format (either _v2_ or _v3_).
+* _Schema_: REST APIs must provide a schema in [OpenAPI format](https://www.openapis.org/). We support versions _2.0_, _3.0_ and _3.1_. Unfortunately, support for version _3.2_ is currently on hold due to [swagger-parser](https://github.com/swagger-api/swagger-parser/issues/2248).
 
-* _Output_: the tool generates _JUnit_ (version 4 or 5) tests, written in either Java or Kotlin, as well as test suites in Python and JavaScript. For a complete list, see the documentation for the CLI parameter [--outputFormat](docs/options.md). 
+* _OAI Overlay_: for REST APIs, we natively support [Overlay](https://github.com/OAI/Overlay-Specification) transformations. This is needed for testers that want to add test data via "examples" entries without modifying the OpenAPI scheme directly, [see documentation](./docs/overlay.md).
+
+* _Output_: the tool generates _JUnit_ (version 4 or 5) tests, written in either _Java_ or _Kotlin_, as well as test suites in _Python_ and _JavaScript_. For a complete list, see the documentation for the CLI parameter [--outputFormat](docs/options.md). 
   Some examples are: PYTHON_UNITTEST, KOTLIN_JUNIT_5, JAVA_JUNIT_4 and JS_JEST.
   Note that the generated tests rely on third-party libraries (e.g., to make HTTP calls). 
   These will need to be setup in your projects, [see documentation](docs/library_dependencies.md).
@@ -227,10 +241,11 @@ Existing open-source tools for REST API fuzzing, with at least 100 stars on GitH
 [Fuzz-lightyear](https://github.com/Yelp/fuzz-lightyear),
 [ResTest](https://github.com/isa-group/RESTest),
 [Restler](https://github.com/microsoft/restler-fuzzer),
+[Schemathesis](https://github.com/schemathesis/schemathesis)
 and
-[Schemathesis](https://github.com/schemathesis/schemathesis).
+[WuppieFuzz](https://github.com/TNO-S3/WuppieFuzz).
 
-All these tools are _black-box_, i.e., they do not analyze the source-code of the tested APIs to generate more effective test data.
+Apart from WuppieFuzz, all these tools are _black-box_, i.e., they do not analyze the source-code of the tested APIs to generate more effective test data.
 As we are the authors of EvoMaster, we are too biased to compare it properly with those other black-box tools.
 However, different independent studies (e.g., in [2022](https://arxiv.org/abs/2204.08348) and [2024](https://arxiv.org/abs/2410.12547)) shows that EvoMaster is among the best performant.
 Furthermore, if your APIs are running on the JVM (e.g., written in Java or Kotlin), then EvoMaster has clearly an advantage, as it supports _white-box_ testing. 
@@ -279,6 +294,7 @@ Otherwise, if you are working in industry on closed-source APIs, we have options
 * [Library dependencies for the generated tests](docs/library_dependencies.md)
 * [How to contribute](docs/contribute.md)
   * [Technical notes for developers contributing to EvoMaster](docs/for_developers.md)
+  * [Notes for MSc/BSc students doing their theses/projects with EvoMaster](docs/for_msc_bsc_students.md)
 * Troubleshooting
   * [Windows and networking](docs/troubleshooting/windows.md)
   * [java.lang.OutOfMemoryError](docs/troubleshooting/outofmemory.md)

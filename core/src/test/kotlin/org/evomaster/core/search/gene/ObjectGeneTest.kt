@@ -1,5 +1,6 @@
 package org.evomaster.core.search.gene
 
+import org.evomaster.core.search.gene.collection.ArrayGene
 import org.evomaster.core.search.gene.numeric.IntegerGene
 import org.evomaster.core.search.gene.string.StringGene
 import org.evomaster.core.search.gene.utils.GeneUtils
@@ -38,37 +39,55 @@ internal class ObjectGeneTest {
     fun testIntegerGene() {
         val gene = ObjectGene("anElement", listOf(IntegerGene("integerValue", value = 0)))
         val actual = gene.getValueAsPrintableString(mode = GeneUtils.EscapeMode.XML)
-        Assertions.assertEquals("<anElement>0</anElement>", actual)
+        Assertions.assertEquals("<anElement><integerValue>0</integerValue></anElement>", actual)
     }
 
     @Test
     fun testBooleanGene() {
         val gene = ObjectGene("anElement", listOf(BooleanGene("booleanValue", value = false)))
         val actual = gene.getValueAsPrintableString(mode = GeneUtils.EscapeMode.XML)
-        Assertions.assertEquals("<anElement>false</anElement>", actual)
+        Assertions.assertEquals("<anElement><booleanValue>false</booleanValue></anElement>", actual)
     }
 
     @Test
     fun testStringGene() {
         val gene = ObjectGene("anElement", listOf(StringGene("stringValue", value = "Hello World")))
         val actual = gene.getValueAsPrintableString(mode = GeneUtils.EscapeMode.XML)
-        Assertions.assertEquals("<anElement>Hello World</anElement>", actual)
+        Assertions.assertEquals("<anElement><stringValue>Hello World</stringValue></anElement>", actual)
     }
 
     @Test
     fun testEscapedStringGene() {
         val gene = ObjectGene("anElement", listOf(StringGene("stringValue", value = "<xml>This should be escaped</xml>")))
         val actual = gene.getValueAsPrintableString(mode = GeneUtils.EscapeMode.XML)
-        Assertions.assertEquals("<anElement>&lt;xml&gt;This should be escaped&lt;/xml&gt;</anElement>", actual)
+        Assertions.assertEquals("<anElement><stringValue>&lt;xml&gt;This should be escaped&lt;/xml&gt;</stringValue></anElement>", actual)
+    }
+
+    @Test
+    fun testSingleFieldObjectIsNested() {
+        // Regression: ObjectGene with one named field must produce a child element, not inline value.
+        // e.g. @XmlRootElement class DepositRequest(var amount: Int) should serialize as
+        // <depositRequest><amount>5</amount></depositRequest>, not <depositRequest>5</depositRequest>.
+        val gene = ObjectGene("depositRequest", listOf(IntegerGene("amount", value = 5)))
+        val actual = gene.getValueAsPrintableString(mode = GeneUtils.EscapeMode.XML)
+        assertEquals("<depositRequest><amount>5</amount></depositRequest>", actual)
+    }
+
+    @Test
+    fun testHashTextFieldIsInline() {
+        // A field named "#text" represents direct text content (mixed-content XML elements).
+        val gene = ObjectGene("element", listOf(StringGene(ObjectGene.contentXMLTag, value = "hello")))
+        val actual = gene.getValueAsPrintableString(mode = GeneUtils.EscapeMode.XML)
+        assertEquals("<element>hello</element>", actual)
     }
 
     @Test
     fun testManyFields() {
-        val child0 = ObjectGene("child", listOf())
-        val child1 = ObjectGene("child", listOf())
+        val child0 = ObjectGene("child0", listOf())
+        val child1 = ObjectGene("child1", listOf())
         val gene = ObjectGene("parent", listOf(child0, child1))
         val actual = gene.getValueAsPrintableString(mode = GeneUtils.EscapeMode.XML)
-        assertEquals("<parent><child></child><child></child></parent>", actual)
+        assertEquals("<parent><child0></child0><child1></child1></parent>", actual)
     }
 
 
@@ -100,5 +119,55 @@ internal class ObjectGeneTest {
         val actual = selection.getValueAsPrintableString(mode = GeneUtils.EscapeMode.BOOLEAN_SELECTION_MODE)
 
         assertEquals("{foo,bar,nested{hello}}", actual)
+    }
+
+    @Test
+    fun testValueAsContent() {
+
+        val root = ObjectGene(
+            name = "device",
+            listOf(
+                StringGene(ObjectGene.contentXMLTag, "XPhone"),
+                ObjectGene(
+                    name = "location",
+                    listOf(
+                        StringGene("country", "AR"),
+                        ObjectGene(
+                            name = "gps",
+                            listOf(
+                                IntegerGene(ObjectGene.contentXMLTag, 12),
+                                IntegerGene("lon", 34)
+                            )
+                        )
+                    )
+                )
+            )
+        )
+
+        val actual = root.getValueAsPrintableString(mode = GeneUtils.EscapeMode.XML)
+        val expected =
+            "<device>XPhone" +
+                    "<location>" +
+                        "<country>AR</country>" +
+                        "<gps>12" +
+                            "<lon>34</lon>" +
+                        "</gps>" +
+                    "</location>" +
+            "</device>"
+        assertEquals(expected, actual)
+    }
+
+    @Test
+    fun testXmlArrayPrinting() {
+
+        val item1 = StringGene("sarasa1", "yC")
+        val item2 = StringGene("lala2", "2ctkEeIof")
+
+        val array = ArrayGene("photoUrls", StringGene("item"), elements = mutableListOf(item1, item2))
+
+        val root = ObjectGene(name = "root", fields = listOf(array))
+
+        val xml = root.getValueAsPrintableString(mode = GeneUtils.EscapeMode.XML)
+        assertEquals("<root><photoUrls><sarasa1>yC</sarasa1><lala2>2ctkEeIof</lala2></photoUrls></root>", xml)
     }
 }

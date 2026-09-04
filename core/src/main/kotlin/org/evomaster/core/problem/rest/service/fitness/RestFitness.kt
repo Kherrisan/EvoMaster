@@ -1,10 +1,11 @@
 package org.evomaster.core.problem.rest.service.fitness
 
-import org.evomaster.core.sql.SqlAction
-import org.evomaster.core.mongo.MongoDbAction
+import org.evomaster.core.database.sql.SqlAction
+import org.evomaster.core.database.mongo.MongoDbAction
 import org.evomaster.core.problem.httpws.auth.AuthUtils
 import org.evomaster.core.problem.rest.data.RestCallResult
 import org.evomaster.core.problem.rest.data.RestIndividual
+import org.evomaster.core.database.redis.RedisDbAction
 import org.evomaster.core.search.action.ActionFilter
 import org.evomaster.core.search.action.ActionResult
 import org.evomaster.core.search.EvaluatedIndividual
@@ -30,8 +31,9 @@ open class RestFitness : AbstractRestFitness() {
         rc.resetSUT()
         goingToStartExecutingNewTest()
 
-        val cookies = AuthUtils.getCookies(client, getBaseUrl(), individual)
-        val tokens = AuthUtils.getTokens(client, getBaseUrl(), individual)
+        val placeholders = AuthUtils.createUsers(client, getBaseUrl(), individual)
+        val cookies = AuthUtils.getCookies(client, getBaseUrl(), individual, placeholders)
+        val tokens = AuthUtils.getTokens(client, getBaseUrl(), individual, placeholders)
 
         if (log.isTraceEnabled){
             log.trace("do evaluate the individual, which contains {} dbactions and {} rest actions",
@@ -43,6 +45,7 @@ open class RestFitness : AbstractRestFitness() {
 
         doDbCalls(individual.seeInitializingActions().filterIsInstance<SqlAction>(), actionResults = actionResults)
         doMongoDbCalls(individual.seeInitializingActions().filterIsInstance<MongoDbAction>(), actionResults = actionResults)
+        doRedisDbCalls(individual.seeInitializingActions().filterIsInstance<RedisDbAction>(), actionResults = actionResults)
 
 
         val fv = FitnessValue(individual.size().toDouble())

@@ -2,13 +2,10 @@ package org.evomaster.e2etests.spring.openapi.v3.security.stacktrace
 
 import com.foo.rest.examples.spring.openapi.v3.security.stacktrace.StackTraceController
 import com.webfuzzing.commons.faults.DefinedFaultCategory
-import com.webfuzzing.commons.faults.FaultCategory
 import org.evomaster.core.problem.enterprise.DetectedFaultUtils
 import org.evomaster.core.problem.enterprise.ExperimentalFaultCategory
 import org.evomaster.core.problem.rest.data.HttpVerb
 import org.evomaster.e2etests.spring.openapi.v3.SpringTestBase
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -47,11 +44,11 @@ class StackTraceEMTest : SpringTestBase(){
             val faultsCategories = DetectedFaultUtils.getDetectedFaultCategories(solution)
             val faults = DetectedFaultUtils.getDetectedFaults(solution)
 
-            assertTrue(ExperimentalFaultCategory.SECURITY_STACK_TRACE in faultsCategories)
+            assertTrue(DefinedFaultCategory.SECURITY_LEAKED_STACK_TRACES in faultsCategories)
 
             // GET:/api/resources/null-pointer_not_stack_trace
             assertTrue(faults.none {
-                it.category == ExperimentalFaultCategory.SECURITY_STACK_TRACE
+                it.category == DefinedFaultCategory.SECURITY_LEAKED_STACK_TRACES
                         && it.operationId == "GET:/api/resources/null-pointer_not_stack_trace"
             })
 

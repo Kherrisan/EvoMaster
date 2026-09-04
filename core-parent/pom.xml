@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.evomaster</groupId>
         <artifactId>evomaster</artifactId>
-        <version>4.0.1-SNAPSHOT</version>
+        <version>6.1.2-SNAPSHOT</version>
     </parent>
 
     <groupId>org.evomaster</groupId>
@@ -14,15 +14,37 @@
     <name>${project.groupId}:${project.artifactId}</name>
 
     <properties>
+        <!-- Before we can upgrade this, need to get rid off Jersey/Jetty in client-java -->
+        <jersey.version>2.48</jersey.version>
         <!--   upgrading to 1.0.68  breaks Spring... TODO would need try upgrading in own branch    -->
-        <swagger.parser-v2.version>1.0.61</swagger.parser-v2.version>
+        <swagger.parser-v2.version>1.0.64</swagger.parser-v2.version>
         <!--   upgrading to 2.1.18  breaks Spring... TODO would need try upgrading in own branch -->
-        <swagger.parser-v3.version>2.1.8</swagger.parser-v3.version>
+        <swagger.parser-v3.version>2.1.14</swagger.parser-v3.version>
         <swagger.annotations.version>2.2.7</swagger.annotations.version>
+        <langchain4j.version>1.15.0</langchain4j.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+
+            <!-- Jersey -->
+            <dependency>
+                <groupId>org.glassfish.jersey.media</groupId>
+                <artifactId>jersey-media-json-jackson</artifactId>
+                <version>${jersey.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.glassfish.jersey.core</groupId>
+                <artifactId>jersey-client</artifactId>
+                <version>${jersey.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.glassfish.jersey.inject</groupId>
+                <artifactId>jersey-hk2</artifactId>
+                <version>${jersey.version}</version>
+            </dependency>
+
+
             <!-- Dependency Injection -->
             <dependency>
                 <groupId>com.google.inject</groupId>
@@ -36,7 +58,7 @@
                 <exclusions>
                     <!--It looks like it uses quite a few old versions -->
                     <exclusion>
-                        <groupId>org.hibernate</groupId>
+                        <groupId>org.hibernate.validator</groupId>
                         <artifactId>hibernate-validator</artifactId>
                     </exclusion>
                     <exclusion>
@@ -67,6 +89,51 @@
                 <artifactId>swagger-request-validator-core</artifactId>
                 <version>2.44.9</version>
             </dependency>
+            <dependency>
+                <groupId>com.webfuzzing</groupId>
+                <artifactId>overlay-jvm</artifactId>
+                <version>0.3.0</version>
+            </dependency>
+
+
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-csv</artifactId>
+                <version>1.14.1</version>
+            </dependency>
+
+            <!--  LLM support  -->
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j</artifactId>
+                <version>${langchain4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-open-ai</artifactId>
+                <version>${langchain4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-ollama</artifactId>
+                <version>${langchain4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-azure-open-ai</artifactId>
+                <version>${langchain4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-google-ai-gemini</artifactId>
+                <version>${langchain4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-anthropic</artifactId>
+                <version>${langchain4j.version}</version>
+            </dependency>
+
         </dependencies>
     </dependencyManagement>
 </project>

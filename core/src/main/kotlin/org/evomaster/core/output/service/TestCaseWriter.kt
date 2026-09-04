@@ -9,9 +9,11 @@ import org.evomaster.core.output.TestWriterUtils
 import org.evomaster.core.output.TestWriterUtils.getWireMockVariableName
 import org.evomaster.core.problem.enterprise.EnterpriseActionResult
 import org.evomaster.core.problem.enterprise.EnterpriseIndividual
+import org.evomaster.core.problem.enterprise.ExperimentalFaultCategory
 import org.evomaster.core.problem.externalservice.HostnameResolutionAction
 import org.evomaster.core.problem.externalservice.httpws.HttpExternalServiceAction
 import org.evomaster.core.problem.externalservice.httpws.param.HttpWsResponseParam
+import org.evomaster.core.problem.httpws.HttpWsCallResult
 import org.evomaster.core.search.action.Action
 import org.evomaster.core.search.action.ActionResult
 import org.evomaster.core.search.EvaluatedIndividual
@@ -43,6 +45,13 @@ abstract class TestCaseWriter {
 
     companion object {
         private val log = LoggerFactory.getLogger(TestCaseWriter::class.java)
+
+
+        /**
+        * message for the assertion that flags a missing expected timeout (Java/Kotlin/C#)
+        * JS uses await expect(...).rejects.toThrow() and Python uses with self.assertRaises(...)
+        */
+        private const val EXPECTED_TIMEOUT_MSG = "Expected a timeout"
     }
 
 
@@ -71,6 +80,13 @@ abstract class TestCaseWriter {
     }
 
     protected abstract fun addTestCommentBlock(lines: Lines, test: TestCase)
+
+    /**
+     * Compute Playwright fixtures to destructure in the test signature.
+     * For REST-only generation we currently need only the `request` fixture.
+     * This helper can be extended later (e.g., include `page`) by refactoring it to a List<String>.
+     */
+    private fun playwrightFixturesFor(test: TestCase): String = "request"
 
     fun convertToCompilableTestCode(
             test: TestCase,
@@ -116,7 +132,10 @@ abstract class TestCaseWriter {
         when {
             format.isJava() -> lines.add("public void ${test.name}() throws Exception {")
             format.isKotlin() -> lines.add("fun ${test.name}()  {")
-            format.isJavaScript() -> lines.add("test(\"${test.name}\", async () => {")
+            format.isJavaScript() ->
+                if (format.isPlaywright()) {val fixtures = playwrightFixturesFor(test)
+                    lines.add("test(\"${test.name}\", async ({ $fixtures }) => {")}
+            else lines.add("test(\"${test.name}\", async () => {")
             format.isCsharp() -> lines.add("public async Task ${test.name}() {")
             format.isPython() -> lines.add("def ${test.name}(self):")
         }
@@ -124,12 +143,14 @@ abstract class TestCaseWriter {
 
         lines.indented {
             val ind = test.test
-            val insertionVars = mutableListOf<Pair<String, String>>()
+            val sqlInsertionVars = mutableListOf<Pair<String, String>>()
+            val mongoInsertionVars = mutableListOf<Pair<String, String>>()
+            val redisInsertionVars = mutableListOf<Pair<String, String>>()
             // FIXME: HostnameResolutionActions can be a separately, for now it's under
             //  handleFieldDeclarations.
-            handleTestInitialization(lines, baseUrlOfSut, ind, insertionVars, test.name)
-            handleActionCalls(lines, baseUrlOfSut, ind, insertionVars, testCaseName = test.name, testSuitePath)
-            handleCleanUpActions(lines, baseUrlOfSut, ind, insertionVars, test.name,testSuitePath)
+            handleTestInitialization(lines, baseUrlOfSut, ind, sqlInsertionVars, mongoInsertionVars, redisInsertionVars, test.name)
+            handleActionCalls(lines, baseUrlOfSut, ind, sqlInsertionVars, mongoInsertionVars, redisInsertionVars, testCaseName = test.name, testSuitePath)
+            handleCleanUpActions(lines, baseUrlOfSut, ind, sqlInsertionVars, mongoInsertionVars, redisInsertionVars, test.name,testSuitePath)
         }
 
 
@@ -199,13 +220,17 @@ abstract class TestCaseWriter {
      * for this test, and other needed setups, like SQL insertions.
      * @param lines are generated lines which save the generated test scripts
      * @param ind is the final individual (ie test) to be generated into the test scripts
-     * @param insertionVars contains variable names of sql insertions (Pair.first) with their results (Pair.second).
+     * @param sqlInsertionVars contains variable names of sql insertions (Pair.first) with their results (Pair.second).
+     * @param mongoInsertionVars contains variable names of mongo insertions (Pair.first) with their results (Pair.second).
+     * @param redisInsertionVars contains variable names of redis insertions (Pair.first) with their results (Pair.second).
      */
     protected abstract fun handleTestInitialization(
         lines: Lines,
         baseUrlOfSut: String,
         ind: EvaluatedIndividual<*>,
-        insertionVars: MutableList<Pair<String, String>>,
+        sqlInsertionVars: MutableList<Pair<String, String>>,
+        mongoInsertionVars: MutableList<Pair<String, String>>,
+        redisInsertionVars: MutableList<Pair<String, String>>,
         testName: String
     )
 
@@ -214,13 +239,17 @@ abstract class TestCaseWriter {
      * @param lines are generated lines which save the generated test scripts
      * @param baseUrlOfSut is the base url of sut
      * @param ind is the final individual (ie test) to be generated into the test scripts
-     * @param insertionVars contains variable names of sql insertions (Pair.first) with their results (Pair.second).
+     * @param sqlInsertionVars contains variable names of sql insertions (Pair.first) with their results (Pair.second).
+     * @param mongoInsertionVars contains variable names of mongo insertions (Pair.first) with their results (Pair.second).
+     * @param redisInsertionVars contains variable names of redis insertions (Pair.first) with their results (Pair.second).
      */
     protected abstract fun handleActionCalls(
             lines: Lines,
             baseUrlOfSut: String,
             ind: EvaluatedIndividual<*>,
-            insertionVars: MutableList<Pair<String, String>>,
+            sqlInsertionVars: MutableList<Pair<String, String>>,
+            mongoInsertionVars: MutableList<Pair<String, String>>,
+            redisInsertionVars: MutableList<Pair<String, String>>,
             testCaseName: String,
             testSuitePath: Path?
     )
@@ -229,7 +258,9 @@ abstract class TestCaseWriter {
         lines: Lines,
         baseUrlOfSut: String,
         ind: EvaluatedIndividual<*>,
-        insertionVars: MutableList<Pair<String, String>>,
+        sqlInsertionVars: MutableList<Pair<String, String>>,
+        mongoInsertionVars: MutableList<Pair<String, String>>,
+        redisInsertionVars: MutableList<Pair<String, String>>,
         testCaseName: String,
         testSuitePath: Path?
     ){
@@ -270,7 +301,8 @@ abstract class TestCaseWriter {
             result.getFaults().sortedBy { it.category.code }
                 .forEach {
                     val cat = it.category
-                    lines.addSingleCommentLine("Fault${cat.code}. ${cat.descriptiveName}. ${it.context}.")
+                    val context = if(it.context != null) " ${it.context}" else ""
+                    lines.addSingleCommentLine("Fault${cat.code}. ${cat.descriptiveName}.$context")
                     if(it.localMessage != null){
                         lines.append(" ${it.localMessage}")
                     }
@@ -308,6 +340,12 @@ abstract class TestCaseWriter {
         testSuitePath: Path?,
         baseUrlOfSut: String
     ) {
+        val playwrightExpectException = format.isPlaywright() && shouldFailIfExceptionNotThrown(res)
+        val hasThrownVar = if (playwrightExpectException) "hasThrown_${counter++}" else ""
+
+        if (playwrightExpectException) {
+            lines.add("let $hasThrownVar = false;")
+        }
         when {
             /*
                 TODO do we need to handle differently in JS due to Promises?
@@ -318,20 +356,36 @@ abstract class TestCaseWriter {
             format.isPython() -> lines.add("try:")
         }
 
+        // a HTTP_TIMEOUT fault means the call is expected to time out (client timeout == fuzzing
+        // tcpTimeoutMs). if no timeout exception is thrown, the fault did not reproduce -> fail
+        val timeoutFault = res is EnterpriseActionResult
+                && res.getFaults().any { it.category == ExperimentalFaultCategory.HTTP_TIMEOUT }
+
         lines.indented {
             addActionLines(call,index, testCaseName, lines, res, testSuitePath, baseUrlOfSut)
 
-            if (shouldFailIfExceptionNotThrown(res)) {
+            if (timeoutFault) {
+                // only Java/Kotlin/C# reach here; JS uses expect(...).rejects.toThrow() and
+                // Python uses with self.assertRaises(...), neither wrapped in this try/catch
+                lines.add("fail(\"$EXPECTED_TIMEOUT_MSG\");")
+            } else if (shouldFailIfExceptionNotThrown(res)) {
                 if (!format.isJavaScript()) {
                     /*
                         TODO need a way to do it for JS, see
                         https://github.com/facebook/jest/issues/2129
                         what about expect(false).toBe(true)?
                      */
-                    if (format.isPython()) {
-                        lines.add("raise AssertionError(\"Expected exception\")")
+                    if(res is HttpWsCallResult && res.invalidStatus()){
+                        //whether the target library of the generated test will throw an exception on an invalid
+                        //status is not something we can predict, it might vary, and change in the future.
+                        //so, we don't expect throwing an exception.
+                        //for example, Jersey is inconsistent: it throws below 100 but not above 599
                     } else {
-                        lines.add("fail(\"Expected exception\");")
+                        if (format.isPython()) {
+                            lines.add("raise AssertionError(\"Expected exception\")")
+                        } else {
+                            lines.add("fail(\"Expected exception\");")
+                        }
                     }
                 }
             }
@@ -363,18 +417,26 @@ abstract class TestCaseWriter {
             format.isPython() -> lines.add("except Exception as e:")
         }
 
-        res.getErrorMessage()?.let {
+        if (playwrightExpectException) {
             lines.indented {
-                lines.addSingleCommentLine("${it.replace('\n', ' ').replace('\r', ' ')}")
+                lines.add("$hasThrownVar = true;")
             }
         }
 
-        if (format.isPython()) {
-            lines.indented {
+        lines.indented {
+            res.getErrorMessage()?.let {
+                lines.addSingleCommentLine("${it.replace('\n', ' ').replace('\r', ' ')}")
+            }
+            if (format.isPython()) {
                 lines.add("pass")
             }
-        } else {
+        }
+
+        if (!format.isPython()) {
             lines.add("}")
+        }
+        if (playwrightExpectException) {
+            lines.add("expect($hasThrownVar).toBe(true);")
         }
     }
 
@@ -398,5 +460,10 @@ abstract class TestCaseWriter {
         // do nothing
     }
 
+    /**
+     * provide flaky info in a single-line comment
+     */
+    fun flakyInfo(category : String?, value : String, flaky : String) = "Flaky${if (category == null) "" else " $category"}: ${value.replace(
+        System.lineSeparator(), "")} vs. ${flaky.replace(System.lineSeparator(),"")}"
 
 }

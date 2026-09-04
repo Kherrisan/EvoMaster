@@ -2,9 +2,9 @@ package org.evomaster.core.sql.extract.postgres
 
 import org.evomaster.client.java.sql.DbInfoExtractor
 import org.evomaster.client.java.sql.SqlScriptRunner
-import org.evomaster.core.sql.SqlAction
-import org.evomaster.core.sql.SqlActionTransformer
-import org.evomaster.core.sql.SqlInsertBuilder
+import org.evomaster.core.database.sql.SqlAction
+import org.evomaster.core.database.sql.SqlActionTransformer
+import org.evomaster.core.database.sql.SqlInsertBuilder
 import org.evomaster.core.search.gene.*
 import org.evomaster.core.search.gene.numeric.IntegerGene
 import org.evomaster.core.search.gene.sql.SqlXMLGene
@@ -73,8 +73,8 @@ class SqlXMLColumnTest : ExtractTestBasePostgres() {
 
         val action = actions[0]
 
-        val newGene = SqlXMLGene("xmldata", ObjectGene("anElement", listOf(IntegerGene("integerElement", value = 0))))
-        val newInsertAction = SqlAction(table = action.table, selectedColumns = action.selectedColumns, id = action.geInsertionId(), computedGenes = listOf(newGene))
+        val newGene = SqlXMLGene("xmldata", ObjectGene("anElement", listOf(IntegerGene(ObjectGene.contentXMLTag, value = 0))))
+        val newInsertAction = SqlAction(table = action.table, selectedColumns = action.selectedColumns, insertionId = action.insertionId, computedGenes = listOf(newGene))
 
         val query = "Select * from x"
 
@@ -104,8 +104,8 @@ class SqlXMLColumnTest : ExtractTestBasePostgres() {
 
         val action = actions[0]
 
-        val newGene = SqlXMLGene("xmldata", ObjectGene("anElement", listOf(BooleanGene("booleanElement", value = false))))
-        val newInsertAction = SqlAction(table = action.table, selectedColumns = action.selectedColumns, id = action.geInsertionId(), computedGenes = listOf(newGene))
+        val newGene = SqlXMLGene("xmldata", ObjectGene("anElement", listOf(BooleanGene(ObjectGene.contentXMLTag, value = false))))
+        val newInsertAction = SqlAction(table = action.table, selectedColumns = action.selectedColumns, insertionId = action.insertionId, computedGenes = listOf(newGene))
 
         val query = "Select * from x"
 
@@ -135,8 +135,8 @@ class SqlXMLColumnTest : ExtractTestBasePostgres() {
 
         val action = actions[0]
 
-        val newGene = SqlXMLGene("xmldata", ObjectGene("anElement", listOf(StringGene("stringElement", value = "Hello World"))))
-        val newInsertAction = SqlAction(table = action.table, selectedColumns = action.selectedColumns, id = action.geInsertionId(), computedGenes = listOf(newGene))
+        val newGene = SqlXMLGene("xmldata", ObjectGene("anElement", listOf(StringGene(ObjectGene.contentXMLTag, value = "Hello World"))))
+        val newInsertAction = SqlAction(table = action.table, selectedColumns = action.selectedColumns, insertionId = action.insertionId, computedGenes = listOf(newGene))
 
         val query = "Select * from x"
 
@@ -166,8 +166,8 @@ class SqlXMLColumnTest : ExtractTestBasePostgres() {
 
         val action = actions[0]
 
-        val newGene = SqlXMLGene("xmldata", ObjectGene("anElement", listOf(StringGene("stringElement", value = "<xml>This should be escaped</xml>"))))
-        val newInsertAction = SqlAction(table = action.table, selectedColumns = action.selectedColumns, id = action.geInsertionId(), computedGenes = listOf(newGene))
+        val newGene = SqlXMLGene("xmldata", ObjectGene("anElement", listOf(StringGene(ObjectGene.contentXMLTag, value = "<xml>This should be escaped</xml>"))))
+        val newInsertAction = SqlAction(table = action.table, selectedColumns = action.selectedColumns, insertionId = action.insertionId, computedGenes = listOf(newGene))
 
         val query = "Select * from x"
 
@@ -203,7 +203,7 @@ class SqlXMLColumnTest : ExtractTestBasePostgres() {
         val newGene = SqlXMLGene("xmldata", parentElement)
         val expectedXML = newGene.getValueAsPrintableString(mode = GeneUtils.EscapeMode.XML)
 
-        val newInsertAction = SqlAction(table = action.table, selectedColumns = action.selectedColumns, id = action.geInsertionId(), computedGenes = listOf(newGene))
+        val newInsertAction = SqlAction(table = action.table, selectedColumns = action.selectedColumns, insertionId = action.insertionId, computedGenes = listOf(newGene))
 
         val query = "Select * from x"
 

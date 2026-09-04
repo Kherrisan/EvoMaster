@@ -1,9 +1,12 @@
 package org.evomaster.core.sql
 
 import org.evomaster.client.java.controller.api.dto.database.schema.DatabaseType
-import org.evomaster.core.sql.schema.Column
-import org.evomaster.core.sql.schema.ColumnDataType
-import org.evomaster.core.sql.schema.Table
+import org.evomaster.core.database.sql.SqlAction
+import org.evomaster.core.database.sql.SqlActionGeneBuilder
+import org.evomaster.core.database.sql.TableConstraintEvaluator
+import org.evomaster.core.database.sql.schema.Column
+import org.evomaster.core.database.sql.schema.ColumnDataType
+import org.evomaster.core.database.sql.schema.Table
 import org.evomaster.core.search.gene.datetime.DateTimeGene
 import org.evomaster.core.search.gene.numeric.IntegerGene
 import org.evomaster.core.search.gene.string.StringGene
@@ -20,7 +23,7 @@ class TableConstraintEvaluatorTest {
         val column = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=false)
         val constraint = LowerBoundConstraint("table0", "column0", -10L)
         val table = Table("table0", setOf(column), setOf(), setOf(constraint))
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = 0))
         val evaluator = TableConstraintEvaluator()
         val value = constraint.accept(evaluator, action)
@@ -32,7 +35,7 @@ class TableConstraintEvaluatorTest {
         val column = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=false)
         val constraint = LowerBoundConstraint("table0", "column0", 10L)
         val table = Table("table0", setOf(column), setOf(), setOf(constraint))
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = 0))
         val evaluator = TableConstraintEvaluator()
         val value = constraint.accept(evaluator, action)
@@ -44,7 +47,7 @@ class TableConstraintEvaluatorTest {
         val column = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=false)
         val constraint = UpperBoundConstraint("table0", "column0", 10L)
         val table = Table("table0", setOf(column), setOf(), setOf(constraint))
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = 0))
         val evaluator = TableConstraintEvaluator()
         val value = constraint.accept(evaluator, action)
@@ -56,7 +59,7 @@ class TableConstraintEvaluatorTest {
         val column = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=false)
         val constraint = UpperBoundConstraint("table0", "column0", -10L)
         val table = Table("table0", setOf(column), setOf(), setOf(constraint))
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = 0))
         val evaluator = TableConstraintEvaluator()
         val value = constraint.accept(evaluator, action)
@@ -68,7 +71,7 @@ class TableConstraintEvaluatorTest {
         val column = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=false)
         val constraint = RangeConstraint("table0", "column0", -10L, 10L)
         val table = Table("table0", setOf(column), setOf(), setOf(constraint))
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = 0))
         val evaluator = TableConstraintEvaluator()
         val value = constraint.accept(evaluator, action)
@@ -80,7 +83,7 @@ class TableConstraintEvaluatorTest {
         val column = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=false)
         val constraint = RangeConstraint("table0", "column0", -10L, 10L)
         val table = Table("table0", setOf(column), setOf(), setOf(constraint))
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 100L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 100L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = 1000))
         val evaluator = TableConstraintEvaluator()
         val value = constraint.accept(evaluator, action)
@@ -96,7 +99,7 @@ class TableConstraintEvaluatorTest {
         val constraint = AndConstraint("table0", lowerBound, upperBound)
         val table = Table("table0", setOf(column), setOf(), setOf(lowerBound, upperBound))
 
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = 0))
 
 
@@ -114,7 +117,7 @@ class TableConstraintEvaluatorTest {
         val constraint = AndConstraint("table0", lowerBound, upperBound)
         val table = Table("table0", setOf(column), setOf(), setOf(lowerBound, upperBound))
 
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = -15))
 
 
@@ -132,7 +135,7 @@ class TableConstraintEvaluatorTest {
         val constraint = OrConstraint("table0", lowerBound, upperBound)
         val table = Table("table0", setOf(column), setOf(), setOf(lowerBound, upperBound))
 
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = -15))
 
 
@@ -150,7 +153,7 @@ class TableConstraintEvaluatorTest {
         val constraint = OrConstraint("table0", lowerBound, upperBound)
         val table = Table("table0", setOf(column), setOf(), setOf(lowerBound, upperBound))
 
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = 0))
 
 
@@ -168,7 +171,7 @@ class TableConstraintEvaluatorTest {
         val constraint = IffConstraint("table0", lowerBound, upperBound)
         val table = Table("table0", setOf(column), setOf(), setOf(lowerBound, upperBound))
 
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = 0))
 
 
@@ -186,7 +189,7 @@ class TableConstraintEvaluatorTest {
         val constraint = IffConstraint("table0", lowerBound, upperBound)
         val table = Table("table0", setOf(column), setOf(), setOf(lowerBound, upperBound))
 
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = 0))
 
 
@@ -199,7 +202,7 @@ class TableConstraintEvaluatorTest {
     fun testDifferentTableUpperBound() {
         val column = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=false)
         val table = Table("table0", setOf(column), setOf(), setOf())
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = 0))
         val evaluator = TableConstraintEvaluator()
 
@@ -213,7 +216,7 @@ class TableConstraintEvaluatorTest {
     fun testDifferentTableLowerBound() {
         val column = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=false)
         val table = Table("table0", setOf(column), setOf(), setOf())
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = 0))
         val evaluator = TableConstraintEvaluator()
 
@@ -226,7 +229,7 @@ class TableConstraintEvaluatorTest {
     fun testDifferentTableRange() {
         val column = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=false)
         val table = Table("table0", setOf(column), setOf(), setOf())
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = 0))
         val evaluator = TableConstraintEvaluator()
 
@@ -239,7 +242,7 @@ class TableConstraintEvaluatorTest {
     fun testTrueIsNotNullConstraint() {
         val column = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=false)
         val table = Table("table0", setOf(column), setOf(), setOf())
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = 0))
         val evaluator = TableConstraintEvaluator()
 
@@ -252,7 +255,7 @@ class TableConstraintEvaluatorTest {
     fun testDifferentTableIsNotNullConstraint() {
         val column = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=false)
         val table = Table("table0", setOf(column), setOf(), setOf())
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as IntegerGene).unsafeCopyValueFrom(IntegerGene("column0", value = 0))
         val evaluator = TableConstraintEvaluator()
 
@@ -265,7 +268,7 @@ class TableConstraintEvaluatorTest {
     fun testFalseIsNotNullConstraint() {
         val column = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=false)
         val table = Table("table0", setOf(column), setOf(), setOf())
-        val action = SqlAction(table = table, selectedColumns = setOf(), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(), insertionId = 0L)
 
         val constraint = IsNotNullConstraint("table0", "column0")
         val evaluator = TableConstraintEvaluator()
@@ -278,7 +281,7 @@ class TableConstraintEvaluatorTest {
     fun testIsNotNullConstraintOfNullableColumn() {
         val column = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=true)
         val table = Table("table0", setOf(column), setOf(), setOf())
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as NullableGene).isActive = false
 
         val constraint = IsNotNullConstraint("table0", "column0")
@@ -291,7 +294,7 @@ class TableConstraintEvaluatorTest {
     fun testIsNotNullConstraintOfNullableColumnNullValue() {
         val column = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=true)
         val table = Table("table0", setOf(column), setOf(), setOf())
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as NullableGene).isActive = true
 
         val constraint = IsNotNullConstraint("table0", "column0")
@@ -306,7 +309,7 @@ class TableConstraintEvaluatorTest {
         val column = Column("column0", ColumnDataType.TEXT, databaseType = DatabaseType.H2, enumValuesAsStrings = listOf("value0", "value1", "value2"), nullable=false)
         val constraint = EnumConstraint("table0", "column0", listOf("value0", "value1", "value2"))
         val table = Table("table0", setOf(column), setOf(), setOf(constraint))
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         val evaluator = TableConstraintEvaluator()
         val value = constraint.accept(evaluator, action)
         assertTrue(value)
@@ -317,7 +320,7 @@ class TableConstraintEvaluatorTest {
         val column = Column("column0", ColumnDataType.TEXT, databaseType = DatabaseType.H2, enumValuesAsStrings = listOf("value0", "value1", "value2"), nullable=false)
         val constraint = EnumConstraint("table1", "column0", listOf("value0", "value1", "value2"))
         val table = Table("table0", setOf(column), setOf(), setOf(constraint))
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         val evaluator = TableConstraintEvaluator()
         val value = constraint.accept(evaluator, action)
         assertTrue(value)
@@ -328,7 +331,7 @@ class TableConstraintEvaluatorTest {
         val column = Column("column0", ColumnDataType.TEXT, databaseType = DatabaseType.H2, enumValuesAsStrings = listOf("value0", "value1", "value2"), nullable=false)
         val constraint = EnumConstraint("table0", "column0", listOf("value0", "value1", "value2"))
         val table = Table("table0", setOf(column), setOf(), setOf(constraint))
-        val action = SqlAction(table = table, selectedColumns = setOf(), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(), insertionId = 0L)
         val evaluator = TableConstraintEvaluator()
         val value = constraint.accept(evaluator, action)
         assertFalse(value)
@@ -339,7 +342,7 @@ class TableConstraintEvaluatorTest {
         val column = Column("column0", ColumnDataType.TEXT, databaseType = DatabaseType.H2, nullable=false)
         val constraint = UniqueConstraint("table0", listOf("column0"))
         val table = Table("table0", setOf(column), setOf(), setOf(constraint))
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as StringGene).unsafeCopyValueFrom(StringGene("foo"))
         val evaluator = TableConstraintEvaluator()
         val value = constraint.accept(evaluator, action)
@@ -351,10 +354,10 @@ class TableConstraintEvaluatorTest {
         val column = Column("column0", ColumnDataType.TEXT, databaseType = DatabaseType.H2, nullable=false)
         val constraint = UniqueConstraint("table0", listOf("column0"))
         val table = Table("table0", setOf(column), setOf(), setOf(constraint))
-        val action0 = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action0 = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action0.seeTopGenes()[0] as StringGene).unsafeCopyValueFrom(StringGene("foo"))
 
-        val action1 = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action1 = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action1.seeTopGenes()[0] as StringGene).unsafeCopyValueFrom(StringGene("foo"))
 
 
@@ -368,10 +371,10 @@ class TableConstraintEvaluatorTest {
         val column = Column("column0", ColumnDataType.TEXT, databaseType = DatabaseType.H2, nullable=false, size=10)
         val constraint = UniqueConstraint("table0", listOf("column0"))
         val table = Table("table0", setOf(column), setOf(), setOf(constraint))
-        val action0 = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action0 = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action0.seeTopGenes()[0] as StringGene).unsafeCopyValueFrom(StringGene("column0", value = "foo"))
 
-        val action1 = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action1 = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action1.seeTopGenes()[0] as StringGene).unsafeCopyValueFrom(StringGene("column0", value = "bar"))
 
         val evaluator = TableConstraintEvaluator(listOf(action0))
@@ -383,7 +386,7 @@ class TableConstraintEvaluatorTest {
     fun testUniqueConstrainDifferentTable() {
         val column = Column("column0", ColumnDataType.TEXT, databaseType = DatabaseType.H2, nullable=false)
         val table = Table("table0", setOf(column), setOf(), setOf())
-        val action0 = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action0 = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action0.seeTopGenes()[0] as StringGene).unsafeCopyValueFrom(StringGene("column0", value = "foo"))
 
         val constraint = UniqueConstraint("table1", listOf("column0"))
@@ -396,7 +399,7 @@ class TableConstraintEvaluatorTest {
     fun testUniqueConstrainNullValues() {
         val column = Column("column0", ColumnDataType.TEXT, databaseType = DatabaseType.H2, nullable=false)
         val table = Table("table0", setOf(column), setOf(), setOf())
-        val action0 = SqlAction(table = table, selectedColumns = setOf(), id = 0L)
+        val action0 = SqlAction(table = table, selectedColumns = setOf(), insertionId = 0L)
 
         val constraint = UniqueConstraint("table0", listOf("column0"))
         val evaluator = TableConstraintEvaluator()
@@ -415,7 +418,7 @@ class TableConstraintEvaluatorTest {
         val constraint = IffConstraint("table0", equalsConstraint, isNotNullConstraint)
 
         val table = Table("table0", setOf(statusColumn, pAtColumn), setOf(), setOf(constraint))
-        val action = SqlAction(table = table, selectedColumns = setOf(statusColumn, pAtColumn), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(statusColumn, pAtColumn), insertionId = 0L)
         (action.seeTopGenes()[0] as StringGene).unsafeCopyValueFrom(StringGene("status", value = "B"))
         (action.seeTopGenes()[1] as DateTimeGene).unsafeCopyValueFrom(SqlActionGeneBuilder().buildSqlTimestampGene("p_at"))
 
@@ -437,11 +440,49 @@ class TableConstraintEvaluatorTest {
         val table = Table("table0", setOf(column), setOf(), setOf())
         val constraint = UnsupportedTableConstraint("table0", "this query was not parsed")
 
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
 
         val evaluator = TableConstraintEvaluator()
         val constraintValue = constraint.accept(evaluator, action)
         assertTrue(constraintValue)
+    }
+
+    @Test
+    fun testUniqueConstraintMultiColumn() {
+        val column0 = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=false)
+        val column1 = Column("column1", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable=false)
+        val constraint = UniqueConstraint("table0", listOf("column0", "column1"))
+        val table = Table("table0", setOf(column0, column1), setOf(), setOf(constraint))
+
+        val action0 = SqlAction(table = table, selectedColumns = setOf(column0, column1), insertionId = 0L)
+        (action0.seeTopGenes()[0] as IntegerGene).value = 10
+        (action0.seeTopGenes()[1] as IntegerGene).value = 1
+
+        val evaluator = TableConstraintEvaluator(listOf(action0))
+
+        // Same values for both columns -> False
+        val action1 = SqlAction(table = table, selectedColumns = setOf(column0, column1), insertionId = 1L)
+        (action1.seeTopGenes()[0] as IntegerGene).value = 10
+        (action1.seeTopGenes()[1] as IntegerGene).value = 1
+        assertFalse(constraint.accept(evaluator, action1))
+
+        // Different value for column0 -> True
+        val action2 = SqlAction(table = table, selectedColumns = setOf(column0, column1), insertionId = 2L)
+        (action2.seeTopGenes()[0] as IntegerGene).value = 20
+        (action2.seeTopGenes()[1] as IntegerGene).value = 1
+        assertTrue(constraint.accept(evaluator, action2))
+
+        // Different value for column1 -> True
+        val action3 = SqlAction(table = table, selectedColumns = setOf(column0, column1), insertionId = 3L)
+        (action3.seeTopGenes()[0] as IntegerGene).value = 10
+        (action3.seeTopGenes()[1] as IntegerGene).value = 2
+        assertTrue(constraint.accept(evaluator, action3))
+
+        // Different values for both columns -> True
+        val action4 = SqlAction(table = table, selectedColumns = setOf(column0, column1), insertionId = 4L)
+        (action4.seeTopGenes()[0] as IntegerGene).value = 20
+        (action4.seeTopGenes()[1] as IntegerGene).value = 2
+        assertTrue(constraint.accept(evaluator, action4))
     }
 
     @Test
@@ -450,7 +491,7 @@ class TableConstraintEvaluatorTest {
         val table = Table("table0", setOf(column), setOf(), setOf())
         val constraint = LikeConstraint("table0", "column0", "%hi_", ConstraintDatabaseType.POSTGRES)
 
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as StringGene).unsafeCopyValueFrom(StringGene("status", value = "hiX"))
 
         val evaluator = TableConstraintEvaluator()
@@ -464,7 +505,7 @@ class TableConstraintEvaluatorTest {
         val table = Table("table0", setOf(column), setOf(), setOf())
         val constraint = LikeConstraint("table0", "column0", "%hi_", ConstraintDatabaseType.POSTGRES)
 
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as StringGene).unsafeCopyValueFrom(StringGene("status", value = "not matches"))
 
         val evaluator = TableConstraintEvaluator()
@@ -478,7 +519,7 @@ class TableConstraintEvaluatorTest {
         val table = Table("table0", setOf(column), setOf(), setOf())
         val constraint = SimilarToConstraint("table0", "column0", "/foo/__/bar/(left|right)/[0-9]{4}-[0-9]{2}-[0-9]{2}(/[0-9]*)?", ConstraintDatabaseType.POSTGRES)
 
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as StringGene).unsafeCopyValueFrom(StringGene("column0", value = "/foo/XX/bar/left/0000-00-000"))
 
         val evaluator = TableConstraintEvaluator()
@@ -492,7 +533,7 @@ class TableConstraintEvaluatorTest {
         val table = Table("table0", setOf(column), setOf(), setOf())
         val constraint = SimilarToConstraint("table0", "column0", "/foo/__/bar/(left|right)/[0-9]{4}-[0-9]{2}-[0-9]{2}(/[0-9]*)?", ConstraintDatabaseType.POSTGRES)
 
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as StringGene).unsafeCopyValueFrom(StringGene("column0", value = "/foo/XXXX/bar/left/0000-00-000"))
 
         val evaluator = TableConstraintEvaluator()
@@ -501,12 +542,54 @@ class TableConstraintEvaluatorTest {
     }
 
     @Test
+    fun testUniqueConstraintWithNull() {
+        val column0 = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable = true)
+        val constraint = UniqueConstraint("table0", listOf("column0", "column1"))
+        val table = Table("table0", setOf(column0), setOf(), setOf(constraint))
+
+        val action0 = SqlAction(table = table, selectedColumns = setOf(column0), insertionId = 0L)
+        (action0.seeTopGenes()[0] as NullableGene).isActive = false
+
+        val evaluator = TableConstraintEvaluator(listOf(action0))
+
+        val action1 = SqlAction(table = table, selectedColumns = setOf(column0), insertionId = 1L)
+        (action1.seeTopGenes()[0] as NullableGene).isActive = false
+
+        assertTrue(constraint.accept(evaluator, action1))
+    }
+
+
+    @Test
+    fun testUniqueConstraintMultiColumnWithNulls() {
+        val column0 = Column("column0", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable = true)
+        val column1 = Column("column1", ColumnDataType.INTEGER, databaseType = DatabaseType.H2, nullable = true)
+        val constraint = UniqueConstraint("table0", listOf("column0", "column1"))
+        val table = Table("table0", setOf(column0, column1), setOf(), setOf(constraint))
+
+        val action0 = SqlAction(table = table, selectedColumns = setOf(column0, column1), insertionId = 0L)
+        (action0.seeTopGenes()[0] as NullableGene).isActive = true
+        ((action0.seeTopGenes()[0] as NullableGene).gene as IntegerGene).value = 10
+        (action0.seeTopGenes()[1] as NullableGene).isActive = false // NULL
+
+        val evaluator = TableConstraintEvaluator(listOf(action0))
+
+        // Same values (10, NULL) -> True
+        // This happens since SQL disables the unique constraints when NULL values
+        // are present.
+        val action1 = SqlAction(table = table, selectedColumns = setOf(column0, column1), insertionId = 1L)
+        (action1.seeTopGenes()[0] as NullableGene).isActive = true
+        ((action1.seeTopGenes()[0] as NullableGene).gene as IntegerGene).value = 10
+        (action1.seeTopGenes()[1] as NullableGene).isActive = false // NULL
+        assertTrue(constraint.accept(evaluator, action1))
+    }
+
+    @Test
     fun testSimilarToConstraintDiffTable() {
         val column = Column("column0", ColumnDataType.TEXT, databaseType = DatabaseType.POSTGRES, nullable=false)
         val table = Table("table0", setOf(column), setOf(), setOf())
         val constraint = SimilarToConstraint("table1", "column0", "/foo/__/bar/(left|right)/[0-9]{4}-[0-9]{2}-[0-9]{2}(/[0-9]*)?", ConstraintDatabaseType.POSTGRES)
 
-        val action = SqlAction(table = table, selectedColumns = setOf(column), id = 0L)
+        val action = SqlAction(table = table, selectedColumns = setOf(column), insertionId = 0L)
         (action.seeTopGenes()[0] as StringGene).unsafeCopyValueFrom(StringGene("column0", value = "/foo/XXXX/bar/left/0000-00-000"))
 
         val evaluator = TableConstraintEvaluator()

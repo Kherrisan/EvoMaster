@@ -2,9 +2,108 @@
 
 Under development in `master` branch.
 
-### Changes
+### New Features
+- New test output option `JS_PLAYWRIGHT` to generate JavaScript tests where HTTP calls are done with PlayWright instead of SuperAgent. 
+
+### Fixed Bugs
+- Update to WFC 0.7.0, which fixed few bugs in Web Report
+- Fixed issue that auth configurations could not be read from read-only folders.
+
+# Version 6.1.1
+
+### New Features
+- REST APIs: native support for Overlay. It is now possible to provide as input one or more OAI Overlay files, which are automatically applied to the OpenAPI schema of the tested API.  
+- Support of WFC 0.6.0 for dynamic creation of users in auth configurations. 
+- `--fieldsToSkipInAssertions` can be used to manually specify which flaky fields to skip in assertion generation.
+
+### Addressed GitHub Issues
+- #1286: SSL verification error during the execution of generated tests 
+- #1278: Support Ignoring Response Fields in Black-Box Test Generation for Python Output
+- #1071: Error in EvoMaster 3.1.0: Black-Box Testing Initialization Failure with SSLException
+
+### Fixed Bugs
+- Resolved issue of wrong handling of empty bodies in PUT/PATCH/POST requests. 
+- Fixed sending of wrong content-type header when type is not supported in EvoMaster.
+
+
+# Version 6.1.0
+
+Botched release
+
+# Version 6.0.0
+
+### Breaking Changes
+- Now the default mode for EvoMaster is black-box testing. 
+  If you have workflows where you are running EvoMaster in white-box mode without specifying `--blackBox false`, those will break. Now, you will need to explicitly set that option. 
+
+### New Features
+
+- EvoMaster is now available on PyPi. Can be installed with a simple "pip install evomaster".
+- To simplify EvoMaster's use, parameters such as '--schema' and '--base' have been introduced, that deprecate the previous '--bbSwaggerUrl' and '--bbTargetUrl'. Those latter still work, to keep backward compatibility.  
+- Now EvoMaster will honor 429 responses, by waiting for the provided amount of time in the returned Retry-After header (or for a default amount of time if no header is returned, or its value is incorrect). 
+- Upgraded to WFC 0.5.1, which includes new tab views for 'Examples' and 'Warnings'.
+
+
+### Fixed Bugs
+- Few issues related to named examples in OpenAPI schemas have been fixed, including name-value mismatches and handling of allOf/anyOf/oneOf constraints. 
+- Fixed bug in handling of XML objects having a single entry.
+
+# Version 5.2.0
+
+### New Features
+
+- Several new security oracles have been added, and executed automatically after the main fuzzing session is completed.
+- Each new "phase" (e.g., minimization and security testing) after the search process has now a time-budget which is proportional to the search budget (default 10 percent).
+- Upgraded to WFC 0.4.0, which includes improvements to the Web Report (e.g., "low-code" view), and generation of self-contained index.html file (for whom cannot run a Python HTTP server on their machines, e.g., managers in industry with limited permissions on their corporate laptop).
+
+### Miscellaneous
+
+- Introduced a mascot for EvoMaster: a red-sorcerer black cat with an arrowhead tail. 
+
+### Fixed Bugs
+
+- Fixed issue in generated `statistics.csv`, where entries containing `,` commas are now quoted. 
+- Fixed issue in which progress bar was overriding warning messages. 
+
+# Version 5.1.0
+
+### New Features
+
+- Support for OpenAPI 3.1: proper handling of changes between 3.0 and 3.1 regarding nullability and numeric range inclusiveness.
+- Introduced `--maxTestsPerTestSuite`, with default value of 200. 
+  This is to avoid generating single output test files with thousands of tests.
+  Those will be split among different test suite files, with each containing at most _maxTestsPerTestSuite_ tests. 
+   A negative value means no constraint is applied (i.e., old behavior).  
+- If no authentication information is set up, or if it was done just for a single user, then now we issue descriptive warning messages with links to the documentation on how to set up authentication info.
+- For REAST APIs in which the chosen output format is either Java or Kotlin, there is now a new option `--dtoForRequestPayload` to enable the generation of statically typed DTOs for JSON request body payloads. This would replace current string payloads. This can be useful if you need to modify test cases manually after they are generated. However, as this might reduce test readability, this option is not on by default.
+- XML type is now fully supported in body payloads, including proper handling of XML extra information in the OpenAPI schemas. 
+
+### Fixed Bugs
+
+- making sure Docker image works for both amd64 and arm64 architectures.
+- fixed a connection leak when authentication fails.
+- fixed few edge cases that led to crashes related to handling of MongoDB objects.
+- fixed bug in handling of SQL databases, where commands leading to inconsistent state (eg, duplicated keys) were not properly removed. 
+
+### Addressed GitHub Issues
+
+- #1442: UninitializedPropertyAccessException: lateinit property mutator not initialized in MioAlgorithm when using --sqli true 
+
+# Version 5.0.2
+
+### Fixed Bugs
+
+- fixed issues when parsing OpenAPI schemas with PATCH methods and YAML size more than 3MB.
+
+# Version 5.0.0
+
+### Breaking Changes
 
 - _core_ process is moved to JDK 17, while _driver_ is still on 8 (and it will be for the foreseeable future). If you run EM from its installers or Docker, you will see no difference. However, if you run it via its jar file with '_java -jar_', then you need to make sure to have JDK 17 (or 21, but not 25). 
+
+- _auth_ declarations have been updated to latest _WFC_ version __0.2.0__. 
+  Those have breaking changes in the name of fields in the settings of _TokenHandler_. 
+  See WFC for updated documentation.
 
 ### New Features
 
@@ -18,6 +117,7 @@ Under development in `master` branch.
 ### Addressed GitHub Issues
 
 - #1263: Unable to insert data into MySQL 
+- #1299: A feature request to extract authentication token from a response header
 - #1400: EvoMaster crashes with "invalid start or end" error during Dolibarr API testing
 
 # Version 4.0.0

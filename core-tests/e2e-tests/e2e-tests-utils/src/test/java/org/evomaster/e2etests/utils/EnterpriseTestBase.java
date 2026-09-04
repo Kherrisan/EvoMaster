@@ -23,6 +23,7 @@ import org.evomaster.core.problem.api.ApiWsIndividual;
 import org.evomaster.core.remote.service.RemoteController;
 import org.evomaster.core.remote.service.RemoteControllerImplementation;
 import org.evomaster.core.search.Solution;
+import org.evomaster.core.search.gene.collection.EnumGene;
 import org.evomaster.core.search.service.Statistics;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -44,14 +45,16 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 public abstract class EnterpriseTestBase {
 
-    protected static InstrumentedSutStarter embeddedStarter;
+    protected static SutController sutController;
     protected static String baseUrlOfSut;
     protected static SutController controller;
     protected static RemoteController remoteController;
@@ -67,25 +70,36 @@ public abstract class EnterpriseTestBase {
      * Dirty hack, but could not find any clean way to do disable it for black-box test modules :(
      * unfortunately, as static, cannot be overridden
      */
-    public static boolean shouldApplyInstrumentation = true;
+    protected static boolean shouldApplyInstrumentation = true;
 
+    public static boolean skipInstrumentation() {
+        // if specified, it is in Maven surefire. done here because static variable approach seems to work in
+        // IDE, but not on Maven. But Maven approach would not work in IDE... so nice...
+        String skip = System.getenv("SKIP_INSTRUMENTATION");
+        if(Boolean.parseBoolean(skip)){
+            return true;
+        }
+        return !shouldApplyInstrumentation;
+    }
 
     @BeforeAll
     public static void initInstrumentation(){
-       if(shouldApplyInstrumentation) {
+
+       if(skipInstrumentation()) {
+           return;
+       }
         /*
             Make sure we init agent immediately... this is to avoid classes (eg kotlin library)
             being not instrumented when tests start (as controllers might load them)
          */
-           InstrumentedSutStarter.loadAgent();
+        InstrumentedSutStarter.loadAgent();
 
         /*
             avoid boot-time info across e2e tests
          */
-           ObjectiveRecorder.reset(true);
+        ObjectiveRecorder.reset(true);
 
-           UnitsInfoRecorder.reset();
-       }
+        UnitsInfoRecorder.reset();
     }
 
     @AfterAll
@@ -94,7 +108,7 @@ public abstract class EnterpriseTestBase {
         if(remoteController != null) {
             assertTimeoutPreemptively(Duration.ofMinutes(2), () -> {
                 boolean stopped = remoteController.stopSUT();
-                stopped = embeddedStarter.stop() && stopped;
+                stopped = sutController.stopTheControllerServer() && stopped;
 
                 assertTrue(stopped);
             });
@@ -106,6 +120,8 @@ public abstract class EnterpriseTestBase {
 
     @BeforeEach
     public void initTest() {
+
+        EnumGene.Companion.cleanCache();
 
         //make sure the search can use all instrumentation, even the ones using non-preserving semantics
         MethodReplacementPreserveSemantics.shouldPreserveSemantics = false;
@@ -196,7 +212,7 @@ public abstract class EnterpriseTestBase {
             Consumer<List<String>> lambda,
             int timeoutMinutes) throws Throwable{
 
-        runTestHandlingFlaky(outputFolderName, fullClassName, null, iterations, createTests, lambda, timeoutMinutes);
+        runTestHandlingFlaky(outputFolderName, fullClassName, null, iterations, createTests, false, lambda, timeoutMinutes);
     }
 
     protected void runTestHandlingFlaky(
@@ -205,6 +221,7 @@ public abstract class EnterpriseTestBase {
             List<String> terminations,
             int iterations,
             boolean createTests,
+            boolean handleFlakyWithTests,
             Consumer<List<String>> lambda,
             int timeoutMinutes) throws Throwable{
         List<ClassName> classNames = new ArrayList<>();
@@ -235,6 +252,9 @@ public abstract class EnterpriseTestBase {
                         List<String> args = getArgsWithCompilation(iterations, outputFolderName, className, createTests, finalSplitType, "FALSE");
                         defaultSeed++;
                         lambda.accept(new ArrayList<>(args));
+
+                        if (createTests && handleFlakyWithTests)
+                            runTests(outputFolderName, fullClassName, terminations);
                     }
             );
         });
@@ -246,7 +266,7 @@ public abstract class EnterpriseTestBase {
             int timeoutMinutes,
             Consumer<List<String>> lambda) throws Throwable {
 
-        runTestHandlingFlakyAndCompilation(label, "org.bar."+label, null,  iterations, true, lambda, timeoutMinutes);
+        runTestHandlingFlakyAndCompilation(label, "org.bar."+label, null,  iterations, true, false, lambda, timeoutMinutes);
     }
 
     protected void runTestHandlingFlakyAndCompilation(
@@ -264,7 +284,17 @@ public abstract class EnterpriseTestBase {
             int iterations,
             Consumer<List<String>> lambda) throws Throwable {
 
-        runTestHandlingFlakyAndCompilation(outputFolderName, fullClassName, null, iterations, true, lambda, 3);
+        runTestHandlingFlakyAndCompilation(outputFolderName, fullClassName, null, iterations, true, false, lambda, 3);
+    }
+
+    protected void runTestHandlingFlakyAndCompilation(
+            String outputFolderName,
+            String fullClassName,
+            int iterations,
+            boolean handleFlakyWithTests,
+            Consumer<List<String>> lambda) throws Throwable {
+
+        runTestHandlingFlakyAndCompilation(outputFolderName, fullClassName, null, iterations, true, handleFlakyWithTests, lambda, 3);
     }
 
     protected void runTestHandlingFlakyAndCompilation(
@@ -274,7 +304,7 @@ public abstract class EnterpriseTestBase {
             int iterations,
             Consumer<List<String>> lambda) throws Throwable {
 
-        runTestHandlingFlakyAndCompilation(outputFolderName, fullClassName, terminations, iterations, true, lambda, 3);
+        runTestHandlingFlakyAndCompilation(outputFolderName, fullClassName, terminations, iterations, true, false, lambda, 3);
     }
 
     protected void runTestHandlingFlakyAndCompilation(
@@ -283,24 +313,31 @@ public abstract class EnterpriseTestBase {
             List<String> terminations,
             int iterations,
             boolean createTests,
+            boolean handleFlakyWithTests,
             Consumer<List<String>> lambda,
             int timeoutMinutes) throws Throwable {
 
-        runTestHandlingFlaky(outputFolderName, fullClassName, terminations, iterations, createTests,lambda, timeoutMinutes);
+        runTestHandlingFlaky(outputFolderName, fullClassName, terminations, iterations, createTests, false, lambda, timeoutMinutes);
 
         if (terminations == null) terminations = Arrays.asList("");
         //BMR: this is where I should handle multiples???
-        if (createTests){
-            MethodReplacementPreserveSemantics.shouldPreserveSemantics = true;
+        if (createTests && !handleFlakyWithTests){
+            runTests(outputFolderName, fullClassName, terminations);
+        }
+    }
 
-            for (String termination : terminations) {
-                assertTimeoutPreemptively(Duration.ofMinutes(2), () -> {
-                    ClassName className = new ClassName(fullClassName + termination);
-                    clearCompiledFiles(className);
-                    //the first one goes through, but for the second generated files appear to not be clean.
-                    compileRunAndVerifyTests(outputFolderName, className);
-                });
-            }
+    protected void runTests(String outputFolderName,
+                            String fullClassName,
+                            List<String> terminations){
+        MethodReplacementPreserveSemantics.shouldPreserveSemantics = true;
+
+        for (String termination : terminations) {
+            assertTimeoutPreemptively(Duration.ofMinutes(2), () -> {
+                ClassName className = new ClassName(fullClassName + termination);
+                clearCompiledFiles(className);
+                //the first one goes through, but for the second generated files appear to not be clean.
+                compileRunAndVerifyTests(outputFolderName, className);
+            });
         }
     }
 
@@ -333,7 +370,7 @@ public abstract class EnterpriseTestBase {
 
         compile(outputFolderName);
         klass = loadClass(className);
-        assertNotNull(klass);
+        assertNotNull(klass, "Failed to load generated test suite class after compilation: " + className);
 
         StringWriter writer = new StringWriter();
         PrintWriter pw = new PrintWriter(writer);
@@ -426,13 +463,12 @@ public abstract class EnterpriseTestBase {
          */
         boolean active = code % 2 == 0;
 
-        return new ArrayList<>(Arrays.asList(
+        List<String> arguments = new ArrayList<>(Arrays.asList(
+                "--blackBox", "false",
                 "--createTests", "" + createTests,
                 "--seed", "" + defaultSeed,
                 "--useTimeInFeedbackSampling" , "false",
                 "--sutControllerPort", "" + controllerPort,
-                "--maxEvaluations", "" + iterations,
-                "--stoppingCriterion", "ACTION_EVALUATIONS",
                 "--outputFolder", outputFolderPath(outputFolderName),
                 "--outputFormat", OutputFormat.KOTLIN_JUNIT_5.toString(),
                 //FIXME: should avoid deprecated option, but then need TODO update how class files are deleted from FS
@@ -441,8 +477,21 @@ public abstract class EnterpriseTestBase {
                 "--expectationsActive", "TRUE",
                 "--executiveSummary", summary,
                 "--createConfigPathIfMissing", "false",
-                "--dtoForRequestPayload", ""+active
+                "--dtoForRequestPayload", ""+active,
+                //we disable this, because it impacts the number and NAME of generated test suites files, and we need
+                //that info when making assertions, eg, loading test classes after compilation
+                //still, we have some specific tests to verify this functionality
+                "--maxTestsPerTestSuite","-1"
         ));
+
+        if(iterations >= 0){
+            arguments.add("--maxEvaluations");
+            arguments.add(""+iterations);
+            arguments.add("--stoppingCriterion");
+            arguments.add("ACTION_EVALUATIONS");
+        }
+
+        return arguments;
     }
 
 
@@ -501,10 +550,14 @@ public abstract class EnterpriseTestBase {
 
         EnterpriseTestBase.controller = controller;
 
-        embeddedStarter = new InstrumentedSutStarter(controller);
-        embeddedStarter.start();
+        if(!skipInstrumentation()) {
+            new InstrumentedSutStarter(controller);
+        }
 
-        controllerPort = embeddedStarter.getControllerServerPort();
+        sutController = controller;
+        sutController.startTheControllerServer();
+
+        controllerPort = sutController.getControllerServerPort();
 
         remoteController = new RemoteControllerImplementation("localhost", controllerPort, true, true, config);
         boolean started = remoteController.startSUT();
@@ -572,6 +625,10 @@ public abstract class EnterpriseTestBase {
         assertTextInTests(outputFolder,className, l -> l.contains(content));
     }
 
+    protected void assertTextNotInTests(String outputFolder, String className, String content) {
+        assertTextNotInTests(outputFolder, className, l -> l.contains(content));
+    }
+
         /**
          * assert a certain text in the generated tests
          * @param outputFolder the folder where the test is
@@ -584,6 +641,68 @@ public abstract class EnterpriseTestBase {
         try {
             boolean ok = Files.lines(test).anyMatch(condition);
             String msg = "Cannot find line with requested condition in "+className+" in "+outputFolder;
+            assertTrue(ok, msg);
+        }catch (IOException e){
+            throw new IllegalStateException("Fail to get the test "+className+" in "+outputFolder+" with error "+ e.getMessage());
+        }
+    }
+
+    /**
+     * Assert that a certain text is not present in the generated tests.
+     * @param outputFolder the folder where the test is
+     * @param className the complete test name
+     * @param condition is the content to check
+     */
+    protected void assertTextNotInTests(String outputFolder, String className, Predicate<String> condition) {
+        String path = outputFolderPath(outputFolder)+ "/"+String.join("/", className.split("\\."))+".kt";
+        Path test = Paths.get(path);
+        try {
+            boolean ok = Files.lines(test).noneMatch(condition);
+            String msg = "Found line with forbidden condition in "+className+" in "+outputFolder;
+            assertTrue(ok, msg);
+        }catch (IOException e){
+            throw new IllegalStateException("Fail to get the test "+className+" in "+outputFolder+" with error "+ e.getMessage());
+        }
+    }
+
+    protected List<String> getFunctionNames(String outputFolder, String className){
+
+        //this specific on how we create tests
+        String regex = "\\s*fun\\s.*\\(\\)\\s*\\{\\s*";
+        Pattern pattern = Pattern.compile(regex);
+
+        String path = outputFolderPath(outputFolder)+ "/"+String.join("/", className.split("\\."))+".kt";
+        Path test = Paths.get(path);
+        try {
+            return Files.lines(test)
+                    .filter(it -> {
+                        Matcher matcher = pattern.matcher(it);
+                        return matcher.find();
+                    } )
+                    .map(it -> {
+                        int start = it.indexOf("fun") + 3;
+                        int end = it.indexOf("()");
+                        return it.substring(start, end).trim();
+                    })
+                    .collect(Collectors.toList());
+        }catch (IOException e){
+            throw new IllegalStateException("Fail to get the test "+className+" in "+outputFolder+" with error "+ e.getMessage());
+        }
+    }
+
+    /**
+     * assert min count of a certain text in the generated tests
+     * @param outputFolder the folder where the test is
+     * @param className the complete test name
+     * @param condition is the content to check
+     * @param minCount is the minimal count of the certain text existing in the generated tests
+     */
+    protected void assertCountTextInTests(String outputFolder, String className, Predicate<String> condition, int minCount) {
+        String path = outputFolderPath(outputFolder)+ "/"+String.join("/", className.split("\\."))+".kt";
+        Path test = Paths.get(path);
+        try {
+            boolean ok = Files.lines(test).filter(condition).count() >= minCount;
+            String msg = "Cannot find "+minCount+" lines with requested condition in "+className+" in "+outputFolder;
             assertTrue(ok, msg);
         }catch (IOException e){
             throw new IllegalStateException("Fail to get the test "+className+" in "+outputFolder+" with error "+ e.getMessage());

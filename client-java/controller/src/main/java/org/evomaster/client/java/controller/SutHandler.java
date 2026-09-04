@@ -1,10 +1,8 @@
 package org.evomaster.client.java.controller;
 
-import org.evomaster.client.java.controller.api.dto.database.operations.InsertionDto;
-import org.evomaster.client.java.controller.api.dto.database.operations.InsertionResultsDto;
-import org.evomaster.client.java.controller.api.dto.database.operations.MongoInsertionDto;
-import org.evomaster.client.java.controller.api.dto.database.operations.MongoInsertionResultsDto;
+import org.evomaster.client.java.controller.api.dto.database.operations.*;
 import org.evomaster.client.java.controller.api.dto.problem.rpc.ScheduleTaskInvocationResultDto;
+import org.evomaster.client.java.controller.redis.ReflectionBasedRedisClient;
 import org.evomaster.client.java.sql.DbCleaner;
 import org.evomaster.client.java.sql.DbSpecification;
 
@@ -89,6 +87,8 @@ public interface SutHandler {
     InsertionResultsDto execInsertionsIntoDatabase(List<InsertionDto> insertions, InsertionResultsDto... previous);
 
     MongoInsertionResultsDto execInsertionsIntoMongoDatabase(List<MongoInsertionDto> insertions);
+
+    RedisInsertionResultsDto execInsertionsIntoRedisDatabase(List<RedisInsertionDto> insertions);
 
     /**
      * <p>
@@ -181,7 +181,15 @@ public interface SutHandler {
 
     default Object getOpenSearchConnection() {return null;}
 
-    default Object getRedisConnection() {return null;}
+    default ReflectionBasedRedisClient getRedisConnection() {return null;}
+
+    /**
+     * Returns the AWS SDK v2 DynamoDB client used by the SUT, when available.
+     * The return type is Object to avoid a runtime dependency on a specific SDK version.
+     *
+     * @return synchronous or asynchronous DynamoDB client, or {@code null}
+     */
+    default Object getDynamoDbConnection() {return null;}
 
     /**
      * <p>
@@ -196,7 +204,8 @@ public interface SutHandler {
      * reset database if the smart db cleaning is employed
      * </p>
      * @param tablesToClean represents a list of table which will be reset based on specified DbSpecification.
-     *                      note that null tablesToClean means all table will be reset.
+     *                      note that `null` tablesToClean means all table will be reset,
+     *                      empty tablesToClean indicates that none of tables will be reset.
      */
     default void resetDatabase(List<String> tablesToClean){}
 

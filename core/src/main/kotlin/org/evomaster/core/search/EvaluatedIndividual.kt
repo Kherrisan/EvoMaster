@@ -8,16 +8,17 @@ import org.evomaster.core.search.tracer.Traceable
 import org.evomaster.core.search.tracer.TraceableElementCopyFilter
 import org.evomaster.core.search.tracer.TrackOperator
 import org.evomaster.core.Lazy
-import org.evomaster.core.sql.SqlAction
-import org.evomaster.core.sql.SqlActionResult
+import org.evomaster.core.database.sql.SqlAction
+import org.evomaster.core.database.sql.SqlActionResult
 import org.evomaster.core.logging.LoggingUtil
-import org.evomaster.core.mongo.MongoDbAction
+import org.evomaster.core.database.mongo.MongoDbAction
 import org.evomaster.core.problem.enterprise.EnterpriseActionResult
 import org.evomaster.core.problem.externalservice.ApiExternalServiceAction
 import org.evomaster.core.problem.rest.data.RestCallAction
 import org.evomaster.core.problem.rest.data.RestCallResult
 import org.evomaster.core.problem.rest.data.RestIndividual
 import org.evomaster.core.problem.rest.resource.ResourceImpactOfIndividual
+import org.evomaster.core.database.redis.RedisDbAction
 import org.evomaster.core.scheduletask.ScheduleTaskAction
 import org.evomaster.core.search.action.*
 import org.evomaster.core.search.action.ActionFilter.*
@@ -40,7 +41,7 @@ class EvaluatedIndividual<T>(
      * prematurely stopped, there might be fewer
      * results than actions
      */
-    private val results: List<out ActionResult>,
+    private val results: List<ActionResult>,
 
     // for tracking its history
     @ProcessMonitorExcludeField
@@ -99,7 +100,7 @@ class EvaluatedIndividual<T>(
     constructor(
         fitness: FitnessValue,
         individual: T,
-        results: List<out ActionResult>,
+        results: List<ActionResult>,
         trackOperator: TrackOperator? = null,
         index: Int = -1,
         config: EMConfig
@@ -109,14 +110,25 @@ class EvaluatedIndividual<T>(
                 trackOperator = trackOperator,
                 index = index,
                 impactInfo = if ((config.isEnabledImpactCollection())) {
-                    val initActionTypes = individual.seeInitializingActions().groupBy { it::class }.keys.toList()
+                    val initActionTypes = individual.seeInitializingActions()
+                        .map { Class.forName(it.getActionGroupKey()).kotlin }
+                        .distinct()
                     if (individual is RestIndividual && config.isEnabledResourceDependency())
                         ResourceImpactOfIndividual(individual, initActionTypes, config.abstractInitializationGeneToMutate, fitness)
                     else
-                        ImpactsOfIndividual(individual, initActionTypes , config.abstractInitializationGeneToMutate, fitness)
+                        ImpactsOfIndividual(individual, initActionTypes, config.abstractInitializationGeneToMutate, fitness)
                 } else
                     null
             )
+
+    /**
+     * Returns the impact group key for this action, used to look up entries in [ImpactsOfIndividual.initActionImpacts].
+     * For [EnvironmentAction] subclasses, this delegates to [EnvironmentAction.getActionGroupKey], which allows
+     * abstract base classes (e.g., RedisDbAction) to group all their concrete subtypes under a single key.
+     * For all other actions, falls back to the actual class name.
+     */
+    private fun Action.getInitActionClassName(): String =
+        if (this is EnvironmentAction) this.getActionGroupKey() else this::class.java.name
 
     fun copy(): EvaluatedIndividual<T> {
 
@@ -608,7 +620,9 @@ class EvaluatedIndividual<T>(
     }
 
     /**
-     * sync impact info based on [mutated]
+     * sync impact info based on [mutated].
+     * Uses [Action.getInitActionClassName] to resolve the impact group key, so that
+     * abstract base classes (e.g., RedisDbAction) correctly map all their concrete subtypes.
      */
     private fun syncImpact(previous: Individual, mutated: Individual) {
         // db action
@@ -624,7 +638,7 @@ class EvaluatedIndividual<T>(
                     if (p != null){
                         impactInfo!!.getGene(
                             actionName = action.getName(),
-                            initActionClassName = action::class.java.name,
+                            initActionClassName = action.getInitActionClassName(),
                             geneId = rootGeneId,
                             actionIndex = index,
                             localId = action.getLocalId(),
@@ -750,7 +764,7 @@ class EvaluatedIndividual<T>(
                 action as Action
                 return impactInfo.getGene(
                     actionName = action!!.getName(),
-                    initActionClassName = action!!::class.java.name,
+                    initActionClassName = action!!.getInitActionClassName(),
                     geneId = id,
                     actionIndex = actionList.indexOf(action),
                     localId = null,
@@ -919,14 +933,17 @@ class EvaluatedIndividual<T>(
         impactInfo ?: return null
         if(fromInitialization){
             val initAction = individual.seeInitializingActions()[actionIndex]
-            val relativeIndex = individual.seeInitializingActions().filter { it::class.java.name == initAction::class.java.name }.indexOf(initAction)
+            val impactKey = initAction.getInitActionClassName()
+            val relativeIndex = individual.seeInitializingActions()
+                .filter { it.getInitActionClassName() == impactKey }
+                .indexOf(initAction)
             return impactInfo.findImpactsByAction(
                 actionName = initAction.getName(),
                 actionIndex = relativeIndex,
                 localId = null,
                 fixedIndexedAction = true,
                 fromInitialization = fromInitialization,
-                initActionClass = initAction::class.java.name
+                initActionClass = impactKey
             )
         }
 
@@ -988,8 +1005,9 @@ class EvaluatedIndividual<T>(
         }
         return !invalid
     }
+
     private fun initializingActionClasses(): List<KClass<*>> {
-        return listOf(MongoDbAction::class, SqlAction::class, ScheduleTaskAction::class)
+        return listOf(MongoDbAction::class, SqlAction::class, RedisDbAction::class, ScheduleTaskAction::class)
     }
 
     fun hasAnyPotentialFault() = this.fitness.hasAnyPotentialFault(this.individual.searchGlobalState!!.idMapper)

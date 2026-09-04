@@ -1,14 +1,21 @@
 package org.evomaster.core.problem.httpws.service
 
+import com.google.inject.Inject
 import com.webfuzzing.commons.auth.Header
 import org.evomaster.client.java.controller.api.dto.auth.AuthenticationDto
 import org.evomaster.client.java.controller.api.dto.SutInfoDto
+import org.evomaster.core.AnsiColor
+import org.evomaster.core.DocumentationLinks.EM_AUTH_LINK
+import org.evomaster.core.logging.LoggingUtil
 import org.evomaster.core.problem.api.service.ApiWsSampler
 import org.evomaster.core.problem.enterprise.auth.AuthSettings
 import org.evomaster.core.problem.httpws.HttpWsAction
 import org.evomaster.core.problem.httpws.auth.*
 import org.evomaster.core.remote.SutProblemException
 import org.evomaster.core.search.Individual
+import org.evomaster.core.search.service.WarningsAggregator
+import org.evomaster.core.search.warning.GeneralWarning
+import org.evomaster.core.search.warning.WarningCategory
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -21,6 +28,7 @@ abstract class HttpWsSampler<T> : ApiWsSampler<T>() where T : Individual{
     companion object {
         private val log: Logger = LoggerFactory.getLogger(HttpWsSampler::class.java)
     }
+
 
     //TODO move up to Enterprise
     val authentications = AuthSettings()
@@ -55,7 +63,7 @@ abstract class HttpWsSampler<T> : ApiWsSampler<T>() where T : Individual{
     }
 
 
-    protected fun addAuthFromConfig(){
+    private fun addAuthFromConfig(){
 
         //first check if any configured in configuration file (if any)
         config.authFromFile?.forEach { handleAuthInfo(it) }
@@ -84,25 +92,90 @@ abstract class HttpWsSampler<T> : ApiWsSampler<T>() where T : Individual{
         handleAuthInfo(dto)
     }
 
-    protected fun setupAuthentication(infoDto: SutInfoDto) {
+    private fun checkAuthSettings(){
+        val n = authentications.size()
+        if(n==0){
+            val msg = "No authentication info was provided." +
+                    " Unless you are testing an example API, you should setup some authentication info for different users." +
+                    " If this is the first time you are using EvoMaster, and you just want to get a feeling of how it works," +
+                    " then ignore this warning." +
+                    " However, to get better results, you will need setup authentication info, eventually." +
+                    " More info is currently available at "
+            LoggingUtil.uniqueUserWarn(msg + AnsiColor.inBlue(EM_AUTH_LINK))
+            warningsAggregator.addWarning(GeneralWarning(WarningCategory.FUZZER, msg + EM_AUTH_LINK))
+
+        }else if(n==1){
+            val msg = "You have provided authentication information only for a single user." +
+                    " Many of the automatic checks done by EvoMaster for access policy validation are based on the" +
+                    " interactions of 2 or more users." +
+                    " To get better results, you are strongly recommended to provide more user authentication info," +
+                    " at the very minimum 2 in total, but better if at least 1 for each different access role you have in your system" +
+                    " that you are testing." +
+                    " More info is currently available at "
+
+            //TODO if/when in the future we enable dynamic registration of users, likely we will need to update this
+            // warning message
+            LoggingUtil.uniqueUserWarn(msg + AnsiColor.inBlue(EM_AUTH_LINK))
+            warningsAggregator.addWarning(GeneralWarning(WarningCategory.FUZZER, msg + EM_AUTH_LINK))
+        }
+    }
+
+    protected fun setupAuthenticationForBlackBox(){
+        addAuthFromConfig()
+        checkAuthSettings()
+    }
+
+    protected fun setupAuthenticationForWhiteBox(infoDto: SutInfoDto) {
 
         addAuthFromConfig()
 
         val info = infoDto.infoForAuthentication ?: return
 
         info.forEach { handleAuthInfo(it) }
+
+        checkAuthSettings()
     }
 
     private fun handleAuthInfo(i: AuthenticationDto) {
 
-        val auth = try{
-            HttpWsAuthenticationInfo.fromDto(i, config.overrideAuthExternalEndpointURL)
-        }catch (e: Exception){
-            throw SutProblemException("Failed to parse auth info: " + e.message!!)
-        }
+        if(i.createUsers == null) {
+            val auth = try {
+                HttpWsAuthenticationInfo.fromDto(i, config.overrideAuthExternalEndpointURL)
+            } catch (e: Exception) {
+                throw SutProblemException("Failed to parse auth info: " + e.message!!)
+            }
 
-        authentications.addInfo(auth)
-        return
+            authentications.addInfo(auth)
+
+        } else {
+
+            /*
+                make 2 copies, with different names.
+                this might look weird at a first look... if an auth has info to create users,
+                it can create as many as it wants.
+                but, we still need to be able to distinguish 2 different users created in the same test.
+                easiest approach is to have 2 distinct auth objects with different names, as those will
+                be treated as 2 different users, regardless of the fact they are created on the fly
+             */
+            val name = i.name
+            try {
+                i.name = "${name}_x" // changing name is easier than duplicating the DTO
+                val auth = HttpWsAuthenticationInfo.fromDto(i, config.overrideAuthExternalEndpointURL)
+                authentications.addInfo(auth)
+            } catch (e: Exception) {
+                i.name = name
+                throw SutProblemException("Failed to parse auth info: " + e.message!!)
+            }
+            try {
+                i.name = "${name}_y"
+                val auth = HttpWsAuthenticationInfo.fromDto(i, config.overrideAuthExternalEndpointURL)
+                authentications.addInfo(auth)
+            } catch (e: Exception) {
+                i.name = name
+                throw SutProblemException("Failed to parse auth info: " + e.message!!)
+            }
+            i.name = name // let's avoid side-effects on input objects
+        }
     }
 
 

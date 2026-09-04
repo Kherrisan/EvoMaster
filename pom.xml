@@ -9,7 +9,7 @@
         To change version in all modules, use:
         mvn versions:set -DnewVersion=a.b.c
      -->
-    <version>4.0.1-SNAPSHOT</version>
+    <version>6.1.2-SNAPSHOT</version>
 
     <inceptionYear>2016</inceptionYear>
     <name>EvoMaster</name>
@@ -17,14 +17,6 @@
     <url>www.evomaster.org</url>
     <packaging>pom</packaging>
 
-    <modules>
-        <module>core-parent</module>
-        <module>core</module>
-        <module>core-extra</module>
-        <module>core-tests</module>
-        <module>client-java</module>
-        <module>test-utils</module>
-    </modules>
 
     <issueManagement>
         <system>Github</system>
@@ -40,39 +32,32 @@
 
     <profiles>
         <profile>
-            <id>Configs for JDK >= 17</id>
+            <id>default-build</id>
             <activation>
-                <jdk>[17,)</jdk>
+                <activeByDefault>true</activeByDefault>
             </activation>
-            <!--
-                Unfortunately, recent versions of Kotlin led to crashes due JDK 17 module access shenanigans :(
-                setting up .mvn/jvm.config is not a viable option, as it messes up build in JDK 8
-                so, need to use something like
-                MAVEN_OPTS="-Xmx4g - -add-opens=java.base/java.lang=ALL-UNNAMED - -add-opens=java.base/java.io=ALL-UNNAMED"  mvn
-                when running "mvn" on command line for JDK 17 :( what a mess...
-                (btw, note that XML above does not like 2 - - together... so command cannot be directly copy&pasted)
-                for CI, this is handled directly there
-
-                Check following in case Kotlin Plugin will avoid this issues in the future:
-                https://youtrack.jetbrains.com/issue/KT-56137#focus=Comments-27-6800445.0-0
-            -->
-            <properties>
-                <addOpens> --add-opens java.base/sun.net.www.protocol.http=ALL-UNNAMED --add-opens java.base/sun.net.www.protocol.https=ALL-UNNAMED  --add-opens java.base/java.time=ALL-UNNAMED  --add-opens java.base/java.io=ALL-UNNAMED --add-opens java.logging/java.util.logging=ALL-UNNAMED --add-opens  java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.util.regex=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED</addOpens>
-            </properties>
+            <modules>
+                <module>core-parent</module>
+                <module>core</module>
+                <module>core-extra</module>
+                <module>core-tests</module>
+                <module>client-java</module>
+                <module>test-utils</module>
+            </modules>
         </profile>
         <profile>
             <!--
                    This profile is needed when making a deployment to Maven Central.
                    Note: we upload only the client library, not the whole EvoMaster.
-                   However, we also need this root pom.xml. So,
 
-                   On the root:
-                   mvn  -N -Pdeployment -DskipTests  deploy
-
-                   On "client-java":
                    mvn clean -Pdeployment -DskipTests  deploy
+
+                   see documentation on making release
               -->
             <id>deployment</id>
+            <modules>
+                <module>client-java</module>
+            </modules>
             <build>
                 <plugins>
                     <plugin>
@@ -85,6 +70,120 @@
                     </plugin>
                 </plugins>
             </build>
+        </profile>
+
+        <!--  GitHub Action split tests profiles -->
+        <profile>
+            <id>BaseTests</id>
+            <properties>
+                <skipTests>false</skipTests> <!-- false -->
+                <!-- Specific modules -->
+                <skipCore>true</skipCore>
+                <skipCoreIT>true</skipCoreIT>
+                <skipOAV3>true</skipOAV3>
+                <skipOAV2>true</skipOAV2>
+                <skipGraphQL>true</skipGraphQL>
+                <skipMongo>true</skipMongo>
+                <skipH2V1>true</skipH2V1>
+            </properties>
+        </profile>
+        <profile>
+            <id>CoreTests</id>
+            <properties>
+                <skipTests>true</skipTests>
+                <!-- Specific modules -->
+                <skipCore>false</skipCore> <!-- false -->
+                <skipCoreIT>true</skipCoreIT>
+                <skipOAV3>true</skipOAV3>
+                <skipOAV2>true</skipOAV2>
+                <skipGraphQL>true</skipGraphQL>
+                <skipMongo>true</skipMongo>
+                <skipH2V1>true</skipH2V1>
+            </properties>
+        </profile>
+        <profile>
+            <id>CoreITTests</id>
+            <properties>
+                <skipTests>true</skipTests>
+                <!-- Specific modules -->
+                <skipCore>true</skipCore>
+                <skipCoreIT>false</skipCoreIT> <!-- false -->
+                <skipOAV3>true</skipOAV3>
+                <skipOAV2>true</skipOAV2>
+                <skipGraphQL>true</skipGraphQL>
+                <skipMongo>true</skipMongo>
+                <skipH2V1>true</skipH2V1>
+            </properties>
+        </profile>
+        <profile>
+            <id>OAV3Tests</id>
+            <properties>
+                <skipTests>true</skipTests>
+                <!-- Specific modules -->
+                <skipCore>true</skipCore>
+                <skipCoreIT>true</skipCoreIT>
+                <skipOAV3>false</skipOAV3> <!-- false -->
+                <skipOAV2>true</skipOAV2>
+                <skipGraphQL>true</skipGraphQL>
+                <skipMongo>true</skipMongo>
+                <skipH2V1>true</skipH2V1>
+            </properties>
+        </profile>
+        <profile>
+            <id>OAV2Tests</id>
+            <properties>
+                <skipTests>true</skipTests>
+                <!-- Specific modules -->
+                <skipCore>true</skipCore>
+                <skipCoreIT>true</skipCoreIT>
+                <skipOAV3>true</skipOAV3>
+                <skipOAV2>false</skipOAV2> <!-- false -->
+                <skipGraphQL>true</skipGraphQL>
+                <skipMongo>true</skipMongo>
+                <skipH2V1>true</skipH2V1>
+            </properties>
+        </profile>
+        <profile>
+            <id>GraphQLTests</id>
+            <properties>
+                <skipTests>true</skipTests>
+                <!-- Specific modules -->
+                <skipCore>true</skipCore>
+                <skipCoreIT>true</skipCoreIT>
+                <skipOAV3>true</skipOAV3>
+                <skipOAV2>true</skipOAV2>
+                <skipGraphQL>false</skipGraphQL> <!-- false -->
+                <skipMongo>true</skipMongo>
+                <skipH2V1>true</skipH2V1>
+            </properties>
+        </profile>
+        <profile>
+            <id>MongoTests</id>
+            <properties>
+                <skipTests>true</skipTests>
+                <!-- Specific modules -->
+                <skipCore>true</skipCore>
+                <skipCoreIT>true</skipCoreIT>
+                <skipOAV3>true</skipOAV3>
+                <skipOAV2>true</skipOAV2>
+                <skipGraphQL>true</skipGraphQL>
+                <skipMongo>false</skipMongo> <!-- false -->
+                <skipH2V1>true</skipH2V1>
+            </properties>
+        </profile>
+        <profile>
+            <id>H2V1Tests</id>
+            <properties>
+                <skipTests>true</skipTests>
+                <!-- Specific modules -->
+                <skipCore>true</skipCore>
+                <skipCoreIT>true</skipCoreIT>
+                <skipOAV3>true</skipOAV3>
+                <skipOAV2>true</skipOAV2>
+                <skipGraphQL>true</skipGraphQL>
+                <skipMongo>true</skipMongo>
+                <skipH2V1>false</skipH2V1> <!-- false -->
+            </properties>
         </profile>
     </profiles>
 
@@ -110,22 +209,26 @@
     </licenses>
 
     <properties>
-        <addOpens></addOpens> <!-- overridden in profile -->
+        <addOpens> --add-opens java.base/jdk.internal.access.foreign=ALL-UNNAMED  --add-opens java.base/java.nio=ALL-UNNAMED  --add-opens java.base/java.lang.ref=ALL-UNNAMED --add-opens java.base/sun.nio.cs=ALL-UNNAMED --add-opens java.base/java.nio.charset=ALL-UNNAMED --add-opens java.base/sun.net.www.protocol.http=ALL-UNNAMED --add-opens java.base/sun.net.www.protocol.https=ALL-UNNAMED  --add-opens java.base/java.time=ALL-UNNAMED  --add-opens java.base/java.io=ALL-UNNAMED --add-opens java.logging/java.util.logging=ALL-UNNAMED --add-opens  java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.util.regex=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED</addOpens>
         <redirectTestOutputToFile>true</redirectTestOutputToFile>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!--
+            Max heap for the test JVMs (surefire/failsafe). Declared as a property so a submodule
+            can override just the value in its own <properties> without redeclaring the plugin argLine.
+        -->
+        <testHeapXmx>4096m</testHeapXmx>
         <!--  Current version of Kotlin Maven Plugin does not support 25 yet    -->
         <!--  SpringBoot 2.x does not like JDK 21 -->
         <java.version>17</java.version>
         <kotlin.version>2.2.20</kotlin.version>
         <kotlin.compiler.incremental>true</kotlin.compiler.incremental>
-        <wfc.version>0.0.6</wfc.version>
-        <junit.jupiter.version>5.7.2</junit.jupiter.version>
-        <junit.platform.version>1.7.2</junit.platform.version>
+        <wfc.version>0.7.0</wfc.version>
+        <junit.jupiter.version>5.14.2</junit.jupiter.version>
+        <junit.platform.version>1.14.2</junit.platform.version>
         <springboot3.version>3.1.5</springboot3.version>
         <springfox.version>3.0.0</springfox.version>
         <jetty.version>9.4.29.v20200521</jetty.version>
         <slf4j.version>1.7.24</slf4j.version>
-        <jersey.version>2.33</jersey.version>
         <javax.el.version>2.2.5</javax.el.version>
         <!--
             Using latest, eg 2.16.0, breaks build, as Maven Shade Plugin
@@ -136,8 +239,10 @@
             https://www.logicbig.com/tutorials/core-java-tutorial/java-9-changes/multi-release-jars.html
         -->
         <jackson.version>2.14.3</jackson.version>
+        <!-- must stay in sync with what jackson-dataformat-yaml brings in transitively -->
+        <snakeyaml.version>1.33</snakeyaml.version>
         <asm.version>9.9</asm.version>
-        <testcontainers.version>1.21.0</testcontainers.version>
+        <testcontainers.version>1.21.4</testcontainers.version>
         <testcontainers.mockerserver.version>1.17.2</testcontainers.mockerserver.version>
         <mockserver.client.version>5.13.2</mockserver.client.version>
 <!--        <selenium.version>4.31.0</selenium.version>-->
@@ -168,11 +273,23 @@
         <jakarta.persistence-api.version>3.1.0</jakarta.persistence-api.version>
         <jakarta.ws.rs-api.version>3.1.0</jakarta.ws.rs-api.version>
         <org.mongodb.version>4.2.3</org.mongodb.version>
+        <cassandra.driver.version>4.19.2</cassandra.driver.version>
         <org.locationtech.jts.version>1.19.0</org.locationtech.jts.version>
         <org.opensearch.version>3.1.0</org.opensearch.version>
         <org.opensearch.testcontainers.version>1.0.0</org.opensearch.testcontainers.version>
         <org.springframework.data.version>2.6.6</org.springframework.data.version>
         <io.lettuce.core.version>6.1.4.RELEASE</io.lettuce.core.version>
+        <redis.clients.jedis.version>5.1.0</redis.clients.jedis.version>
+        <software.amazon.awssdk.dynamodb.version>2.25.10</software.amazon.awssdk.dynamodb.version>
+
+        <!--   Properties used to control the running of expensive tests in modules  -->
+        <skipCore>false</skipCore>
+        <skipCoreIT>false</skipCoreIT>
+        <skipOAV3>false</skipOAV3>
+        <skipOAV2>false</skipOAV2>
+        <skipGraphQL>false</skipGraphQL>
+        <skipMongo>false</skipMongo>
+        <skipH2V1>false</skipH2V1>
     </properties>
 
 
@@ -200,6 +317,11 @@
             <dependency>
                 <groupId>org.evomaster</groupId>
                 <artifactId>evomaster-dbconstraint</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.evomaster</groupId>
+                <artifactId>asyncapi-parser</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -256,6 +378,11 @@
             </dependency>
             <dependency>
                 <groupId>org.evomaster</groupId>
+                <artifactId>evomaster-client-java-postgres-test-utils</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.evomaster</groupId>
                 <artifactId>evomaster-test-utils-js</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -270,6 +397,11 @@
                 <version>${project.version}</version>
                 <type>pom</type>
                 <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.evomaster</groupId>
+                <artifactId>extra-shared</artifactId>
+                <version>${project.version}</version>
             </dependency>
 
             <dependency>
@@ -367,9 +499,9 @@
                 <version>1.9</version>
             </dependency>
             <dependency>
-                <groupId>org.hibernate</groupId>
+                <groupId>org.hibernate.validator</groupId>
                 <artifactId>hibernate-validator</artifactId>
-                <version>6.1.0.Final</version>
+                <version>6.2.0.Final</version>
             </dependency>
             <dependency>
                 <groupId>com.google.code.gson</groupId>
@@ -379,9 +511,19 @@
             <dependency>
                 <groupId>commons-io</groupId>
                 <artifactId>commons-io</artifactId>
-                <version>2.11.0</version>
+                <version>2.21.0</version>
             </dependency>
-            <dependency> <!-- Used to handle terminal/console inputs -->
+            <dependency>
+                <!-- Used to handle terminal/console inputs -->
+                <!--
+                    This library looks dead, at least in 2026. There were still some discussion in 2025:
+                    https://github.com/jopt-simple/jopt-simple/issues/158
+                    but there is no new release since 2018...
+                    https://mvnrepository.com/artifact/net.sf.jopt-simple/jopt-simple
+                    TODO if for any reason we need to do something more with options, we should switch to something like:
+                    https://github.com/apache/commons-cli
+                    https://github.com/remkop/picocli
+                -->
                 <groupId>net.sf.jopt-simple</groupId>
                 <artifactId>jopt-simple</artifactId>
                 <version>6.0-alpha-3</version>
@@ -458,38 +600,6 @@
                 <version>${jetty.version}</version>
             </dependency>
 
-            <!-- Jersey -->
-            <dependency>
-                <groupId>org.glassfish.jersey.core</groupId>
-                <artifactId>jersey-client</artifactId>
-                <version>${jersey.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.glassfish.jersey.core</groupId>
-                <artifactId>jersey-server</artifactId>
-                <version>${jersey.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.glassfish.jersey.containers</groupId>
-                <artifactId>jersey-container-servlet-core</artifactId>
-                <version>${jersey.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.glassfish.jersey.containers</groupId>
-                <artifactId>jersey-container-jetty-http</artifactId>
-                <version>${jersey.version}</version>
-                <exclusions>
-                    <exclusion>
-                        <groupId>org.eclipse.jetty</groupId>
-                        <artifactId>*</artifactId>
-                    </exclusion>
-                </exclusions>
-            </dependency>
-            <dependency>
-                <groupId>org.glassfish.jersey.inject</groupId>
-                <artifactId>jersey-hk2</artifactId>
-                <version>${jersey.version}</version>
-            </dependency>
 
             <!-- Jackson -->
             <dependency>
@@ -513,6 +623,11 @@
                 <version>${jackson.version}</version>
             </dependency>
             <dependency>
+                <groupId>org.yaml</groupId>
+                <artifactId>snakeyaml</artifactId>
+                <version>${snakeyaml.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>com.fasterxml.jackson.dataformat</groupId>
                 <artifactId>jackson-dataformat-toml</artifactId>
                 <version>${jackson.version}</version>
@@ -530,6 +645,11 @@
             <dependency>
                 <groupId>com.fasterxml.jackson.module</groupId>
                 <artifactId>jackson-module-kotlin</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.datatype</groupId>
+                <artifactId>jackson-datatype-jdk8</artifactId>
                 <version>${jackson.version}</version>
             </dependency>
 
@@ -598,11 +718,43 @@
                 <version>${org.mongodb.version}</version>
             </dependency>
 
+            <dependency>
+                <groupId>org.apache.cassandra</groupId>
+                <artifactId>java-driver-core</artifactId>
+                <version>${cassandra.driver.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.cassandra</groupId>
+                <artifactId>java-driver-query-builder</artifactId>
+                <version>${cassandra.driver.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.cassandra</groupId>
+                <artifactId>java-driver-mapper-runtime</artifactId>
+                <version>${cassandra.driver.version}</version>
+            </dependency>
+
             <!-- Redis/Lettuce -->
             <dependency>
                 <groupId>io.lettuce</groupId>
                 <artifactId>lettuce-core</artifactId>
                 <version>${io.lettuce.core.version}</version>
+            <!-- Need to exclude Netty from this package to avoid a clash of versions with AWS SDK -->
+                <exclusions>
+                    <exclusion>
+                        <groupId>io.netty</groupId>
+                        <artifactId>*</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+
+            <!-- Redis/Jedis -->
+            <dependency>
+                <groupId>redis.clients</groupId>
+                <artifactId>jedis</artifactId>
+                <version>${redis.clients.jedis.version}</version>
             </dependency>
 
             <!-- OpenSearch -->
@@ -616,6 +768,20 @@
                 <groupId>org.opensearch</groupId>
                 <artifactId>opensearch-testcontainers</artifactId>
                 <version>${org.opensearch.testcontainers.version}</version>
+                <scope>test</scope>
+            </dependency>
+
+            <!--   DynamoDB  -->
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>dynamodb</artifactId>
+                <version>${software.amazon.awssdk.dynamodb.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>netty-nio-client</artifactId>
+                <version>${software.amazon.awssdk.dynamodb.version}</version>
                 <scope>test</scope>
             </dependency>
 
@@ -696,7 +862,7 @@
             <dependency>
                 <groupId>io.rest-assured</groupId>
                 <artifactId>rest-assured</artifactId>
-                <version>4.3.0</version>
+                <version>5.5.7</version>
                 <scope>test</scope>
             </dependency>
             <dependency>
@@ -909,7 +1075,7 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.3.1</version>
+                    <version>3.5.4</version>
                     <configuration>
                         <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory"/>
                         <forkCount>1</forkCount>
@@ -926,7 +1092,7 @@
                             Fucking JDK 17!!! And fuck you JEP 403!!!
                             https://bugs.openjdk.java.net/browse/JDK-8266851
                         -->
-                        <argLine>@{argLine} -ea -Xms1024m -Xmx4096m -Xss4m -Dfile.encoding=UTF-8 -Djdk.attach.allowAttachSelf=true -Duser.language=en -Duser.country=GB ${addOpens}</argLine>
+                        <argLine>@{argLine} -ea -Xms1024m -Xmx${testHeapXmx} -Xss4m -Dfile.encoding=UTF-8 -Djdk.attach.allowAttachSelf=true -Duser.language=en -Duser.country=GB ${addOpens}</argLine>
                         <runOrder>alphabetical</runOrder>
                         <excludes>
                             <!-- Do NOT run integration tests with surefire... use failsafe!!!-->
@@ -946,7 +1112,7 @@
                         <redirectTestOutputToFile>${redirectTestOutputToFile}</redirectTestOutputToFile>
                         <rerunFailingTestsCount>2</rerunFailingTestsCount>
                         <trimStackTrace>false</trimStackTrace>
-                        <argLine>@{argLine} -ea -Xms1024m -Xmx4096m -Djdk.attach.allowAttachSelf=true -Duser.language=en -Duser.country=GB ${addOpens}</argLine>
+                        <argLine>@{argLine} -ea -Xms1024m -Xmx${testHeapXmx} -Djdk.attach.allowAttachSelf=true -Duser.language=en -Duser.country=GB ${addOpens}</argLine>
                         <runOrder>alphabetical</runOrder>
                     </configuration>
                     <executions>
@@ -966,11 +1132,6 @@
                     <version>${kotlin.version}</version>
                     <configuration>
                         <jvmTarget>${java.version}</jvmTarget>
-                        <args>
-                        <!--  This seems wrong, as args to compiler but not the JVM itself -->
-<!--                            <arg>&#45;&#45;add-opens=java.base/java.io=ALL-UNNAMED</arg>-->
-<!--                            <arg>&#45;&#45;add-opens=java.base/java.lang=ALL-UNNAMED</arg>-->
-                        </args>
                     </configuration>
                     <executions>
                         <execution>
@@ -1064,7 +1225,7 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-shade-plugin</artifactId>
-                    <version>3.2.1</version>
+                    <version>3.6.2</version>
                 </plugin>
 
                 <!-- To sign Jar files before uploading them to Maven Central -->

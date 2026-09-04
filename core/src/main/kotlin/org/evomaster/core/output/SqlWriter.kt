@@ -2,7 +2,7 @@ package org.evomaster.core.output
 
 import org.apache.commons.lang3.StringEscapeUtils
 import org.evomaster.core.Lazy
-import org.evomaster.core.sql.SqlAction
+import org.evomaster.core.database.sql.SqlAction
 import org.evomaster.core.search.action.EvaluatedDbAction
 import org.evomaster.core.search.gene.Gene
 import org.evomaster.core.search.gene.ObjectGene
@@ -24,7 +24,7 @@ object SqlWriter {
      * @param lines is used to save generated textual lines with respects to [dbInitialization]
      * @param allDbInitialization are all db actions in this test
      * @param groupIndex specifies an index of a group of this [dbInitialization]
-     * @param insertionVars is a list of previous variable names of the db actions (Pair.first) and corresponding results (Pair.second)
+     * @param sqlInsertionVars is a list of previous variable names of the db actions (Pair.first) and corresponding results (Pair.second)
      * @param skipFailure specifies whether to skip failure tests
      */
     fun handleDbInitialization(
@@ -33,7 +33,7 @@ object SqlWriter {
         lines: Lines,
         allDbInitialization: List<SqlAction> = dbInitialization.map { it.sqlAction },
         groupIndex: String ="",
-        insertionVars: MutableList<Pair<String, String>>,
+        sqlInsertionVars: MutableList<Pair<String, String>>,
         skipFailure: Boolean) {
 
         if (dbInitialization.isEmpty()
@@ -43,8 +43,8 @@ object SqlWriter {
 
         val insertionVar = "insertions${groupIndex}"
         val insertionVarResult = "${insertionVar}result"
-        val previousVar = insertionVars.joinToString(", ") { it.first }
-        val previousVarResults = insertionVars.joinToString(", ") { it.second }
+        val previousVar = sqlInsertionVars.joinToString(", ") { it.first }
+        val previousVarResults = sqlInsertionVars.joinToString(", ") { it.second }
         dbInitialization
                 .filter { !it.sqlAction.representExistingData && (!skipFailure || it.sqlResult.getInsertExecutionResult())}
                 .forEachIndexed { index, evaluatedDbAction ->
@@ -53,7 +53,7 @@ object SqlWriter {
                         index == 0 && format.isJava() -> "List<InsertionDto> $insertionVar = sql($previousVar)"
                         index == 0 && format.isKotlin() -> "val $insertionVar = sql($previousVar)"
                         else -> ".and()"
-                    } + ".insertInto(\"${evaluatedDbAction.sqlAction.table.name}\", ${evaluatedDbAction.sqlAction.geInsertionId()}L)")
+                    } + ".insertInto(\"${evaluatedDbAction.sqlAction.table.name}\", ${evaluatedDbAction.sqlAction.insertionId}L)")
 
                     if (index == 0) {
                         lines.indent()
@@ -96,7 +96,7 @@ object SqlWriter {
         } + "$insertionVarResult = controller.execInsertionsIntoDatabase(${if (previousVarResults.isBlank()) insertionVar else "$insertionVar, $previousVarResults"})")
         lines.appendSemicolon()
 
-        insertionVars.add(insertionVar to insertionVarResult)
+        sqlInsertionVars.add(insertionVar to insertionVarResult)
 
     }
 
@@ -110,13 +110,27 @@ object SqlWriter {
                 //TODO already escaped???
                 return x.replace("\"","\\\"")
             }
-            return StringEscapeUtils.escapeJava(x)
+            return when {
+                format.isJava() -> StringEscapeUtils.escapeJava(x)
+                format.isKotlin() -> escapeKotlin(x)
+                else -> throw IllegalStateException("Output format $format is not valid for SQL test case generation")
+            }
             //TODO this is an atypical treatment of escapes. Should we run all escapes through the same procedure?
             // or is this special enough to be justified?
             /*
                 FIXME: Yep, escaping in EM is currently a total mess... will need to be refactored/cleaned up
              */
         }
+    }
+
+    private fun escapeKotlin(value: String): String {
+        /*
+         * Kotlin strings use `$` for interpolation. `getValueAsPrintableString` with kotlin format
+         * already escapes the dollar sign as `\$`. `escapeJava` would escape it again, producing
+         * `\\$` (a double-escaped `$`). We replace this with a single `\$` so the value
+         * is safe for Kotlin source generation.
+         */
+        return StringEscapeUtils.escapeJava(value).replace("\\$", "\$")
     }
 
     private fun handleFK(format: OutputFormat, fkg: SqlForeignKeyGene, action: SqlAction, allActions: List<SqlAction>): String {
@@ -139,14 +153,11 @@ object SqlWriter {
 
         val uniqueIdOfPrimaryKey = fkg.uniqueIdOfPrimaryKey
 
-        /*
-            TODO: the code here is not handling multi-column PKs/FKs
-         */
         val pkExisting = allActions
                 .filter { it.representExistingData }
                 .flatMap { it.seeTopGenes() }
                 .filterIsInstance<SqlPrimaryKeyGene>()
-                .find { it.uniqueId == uniqueIdOfPrimaryKey }
+                .find { it.uniqueId == uniqueIdOfPrimaryKey && it.name == fkg.targetColumn }
 
         /*
            This FK might point to a PK of data already existing in the database.
@@ -175,7 +186,7 @@ object SqlWriter {
         val pkg = allActions
                 .flatMap { it.seeTopGenes() }
                 .filterIsInstance<SqlPrimaryKeyGene>()
-                .find { it.uniqueId == uniqueIdOfPrimaryKey }!!
+                .find { it.uniqueId == uniqueIdOfPrimaryKey && it.name == fkg.targetColumn }!!
 
         val pk = getPrintableValue(format, pkg)
         return ".d(\"$variableName\", \"$pk\")"

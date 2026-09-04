@@ -6,9 +6,11 @@ import org.evomaster.client.java.sql.internal.ColumnTypeParser;
 import java.sql.Time;
 import java.time.*;
 import java.util.Date;
+import java.util.UUID;
 
 import static java.util.Objects.nonNull;
-import static org.evomaster.client.java.sql.heuristic.SqlHeuristicsCalculator.FALSE_TRUTHNESS;
+import static org.evomaster.client.java.distance.heuristics.TruthnessUtils.FALSE_TRUTHNESS;
+import static org.evomaster.client.java.distance.heuristics.TruthnessUtils.TRUE_TRUTHNESS;
 
 /**
  * Utility class for converting various date/time objects to {@link Instant}.
@@ -91,7 +93,7 @@ public class ConversionHelper {
         if (object instanceof Truthness) {
             return (Truthness) object;
         } else if (object instanceof Boolean || object instanceof Number) {
-            return convertToNonNullBoolean(object) ? SqlHeuristicsCalculator.TRUE_TRUTHNESS : FALSE_TRUTHNESS;
+            return convertToNonNullBoolean(object) ? TRUE_TRUTHNESS : FALSE_TRUTHNESS;
         } else {
             throw new RuntimeException("Type must be truthness, boolean or number");
         }
@@ -101,7 +103,7 @@ public class ConversionHelper {
         if (nonNull(object)) {
             return convertToNonNullTruthness(object);
         } else {
-            return SqlHeuristicsCalculator.FALSE_TRUTHNESS;
+            return FALSE_TRUTHNESS;
         }
     }
 
@@ -113,4 +115,21 @@ public class ConversionHelper {
         }
     }
 
+    public static UUID convertToUUID(Object object) {
+        if (nonNull(object)) {
+            return convertToNonNullUUID(object);
+        } else {
+            return null;
+        }
+    }
+
+    private static UUID convertToNonNullUUID(Object object) {
+        if (object instanceof UUID) {
+            return (UUID) object;
+        } else if (object instanceof String){
+            return UUID.fromString((String) object);
+        } else {
+            throw new IllegalArgumentException("Type must be UUID or string");
+        }
+    }
 }

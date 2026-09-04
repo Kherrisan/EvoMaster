@@ -5,9 +5,11 @@ import org.evomaster.core.problem.rest.data.HttpVerb;
 import org.evomaster.core.problem.rest.data.RestIndividual;
 import org.evomaster.core.search.Solution;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+
 
 public class Z3SolverEMTest extends SpringTestBase {
 
@@ -25,12 +27,9 @@ public class Z3SolverEMTest extends SpringTestBase {
                 "com.foo.spring.rest.h2.z3solver.Z3SolverEvoMaster",
                 50,
                 (args) -> {
-                    args.add("--heuristicsForSQL");
-                    args.add("true");
-                    args.add("--generateSqlDataWithSearch");
-                    args.add("false");
-                    args.add("--generateSqlDataWithDSE");
-                    args.add("true");
+                    setOption(args, "heuristicsForSQL", "true");
+                    setOption(args, "generateSqlDataWithSearch", "false");
+                    setOption(args, "generateSqlDataWithZ3", "true");
 
                     Solution<RestIndividual> solution = initAndRun(args);
 

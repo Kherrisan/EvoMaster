@@ -3,6 +3,7 @@ package org.evomaster.core.search.gene.wrapper
 import org.evomaster.core.output.OutputFormat
 import org.evomaster.core.problem.util.ParamUtil
 import org.evomaster.core.search.gene.Gene
+import org.evomaster.core.search.gene.interfaces.PhenotypeDormantGene
 import org.evomaster.core.search.gene.interfaces.WrapperGene
 import org.evomaster.core.search.gene.utils.GeneUtils
 import org.evomaster.core.search.impact.impactinfocollection.value.OptionalGeneImpact
@@ -34,7 +35,7 @@ class OptionalGene(name: String,
                    isActive: Boolean = true,
                    var requestSelection: Boolean = false,
                    var searchPercentageActive: Double = 1.0
-) : SelectableWrapperGene(name, gene, isActive), WrapperGene {
+) : SelectableWrapperGene(name, gene, isActive), WrapperGene, PhenotypeDormantGene {
 
 
     companion object{
@@ -44,7 +45,7 @@ class OptionalGene(name: String,
 
 
     init {
-        if(searchPercentageActive < 0 || searchPercentageActive > 1){
+        if(searchPercentageActive !in 0.0..1.0){
             throw IllegalArgumentException("Invalid searchPercentageActive value: $searchPercentageActive")
         }
     }
@@ -115,7 +116,7 @@ class OptionalGene(name: String,
             return randomness.nextBoolean(INACTIVE)
         }
 
-        if (additionalGeneMutationInfo?.impact is OptionalGeneImpact){
+        if (additionalGeneMutationInfo.impact is OptionalGeneImpact){
             //we only set 'active' false from true when the mutated times is more than 5 and its impact times of a falseValue is more than 1.5 times of a trueValue.
             val inactive = additionalGeneMutationInfo.impact.activeImpact.determinateSelect(
                 minManipulatedTimes = 5,
@@ -156,11 +157,4 @@ class OptionalGene(name: String,
         return gene.getValueAsRawString()
     }
 
-
-
-
-    override fun isChildUsed(child: Gene) : Boolean {
-        verifyChild(child)
-        return isActive
-    }
 }

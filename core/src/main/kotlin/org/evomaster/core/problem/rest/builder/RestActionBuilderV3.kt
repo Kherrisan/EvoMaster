@@ -41,18 +41,26 @@ import org.evomaster.core.search.gene.datetime.DateGene
 import org.evomaster.core.search.gene.datetime.DateTimeGene
 import org.evomaster.core.search.gene.datetime.FormatForDatesAndTimes
 import org.evomaster.core.search.gene.datetime.TimeGene
+import org.evomaster.core.search.gene.interfaces.UserExamplesGene
+import org.evomaster.core.search.gene.network.InetGene
 import org.evomaster.core.search.gene.numeric.*
 import org.evomaster.core.search.gene.wrapper.ChoiceGene
 import org.evomaster.core.search.gene.wrapper.CustomMutationRateGene
 import org.evomaster.core.search.gene.wrapper.OptionalGene
 import org.evomaster.core.search.gene.placeholder.CycleObjectGene
+import org.evomaster.core.search.gene.jsonpatch.JsonPatchDocumentGene
 import org.evomaster.core.search.gene.placeholder.LimitObjectGene
 import org.evomaster.core.search.gene.regex.RegexGene
 import org.evomaster.core.search.gene.string.Base64StringGene
 import org.evomaster.core.search.gene.string.StringGene
+import org.evomaster.core.search.gene.uri.UriGene
+import org.evomaster.core.search.gene.uri.UrlHttpGene
 import org.evomaster.core.search.gene.utils.GeneUtils
+import org.evomaster.core.search.gene.wrapper.NullableGene
+import org.evomaster.core.utils.StringUtils
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import java.math.BigInteger
 import java.net.URI
 import java.net.URISyntaxException
 import java.util.*
@@ -68,11 +76,6 @@ import kotlin.math.max
 object RestActionBuilderV3 {
 
     private val log: Logger = LoggerFactory.getLogger(RestActionBuilderV3::class.java)
-
-    /**
-     * Name given to enum genes representing data examples coming from OpenAPI schema
-     */
-    const val EXAMPLES_NAME = "SCHEMA_EXAMPLES"
 
     private val refCache = mutableMapOf<String, Gene>()
 
@@ -105,25 +108,40 @@ object RestActionBuilderV3 {
         val probUseExamples: Double = 0.0,
 
         /**
-            If we are doing white-box testing, we might use advance techniques like taint analysis,
-            which might impact how we design the chromosome.
-            but, for black-box, they would not be useful
+        If we are doing white-box testing, we might use advance techniques like taint analysis,
+        which might impact how we design the chromosome.
+        but, for black-box, they would not be useful
          */
-        val usingWhiteBox: Boolean = true
+        val usingWhiteBox: Boolean = true,
+
+        val enableAdvancedFormats: Boolean = true,
+
+        val inferFormatFromNames: Boolean = true,
+
+        val enableJsonPatchSupport: Boolean = true,
+
+        val enableXmlWithAttributesSupport: Boolean = true,
+
+        val enableMultipartFormDataSupport: Boolean = false,
     ){
         constructor(config: EMConfig): this(
             enableConstraintHandling = config.enableSchemaConstraintHandling,
             invalidData = config.allowInvalidData,
             probUseDefault = config.probRestDefault,
             probUseExamples = config.probRestExamples,
-            usingWhiteBox = !config.blackBox
+            usingWhiteBox = !config.blackBox,
+            enableAdvancedFormats = config.enableAdvancedFormats,
+            inferFormatFromNames = config.inferFormatFromNames,
+            enableJsonPatchSupport = config.enableJsonPatchSupport,
+            enableXmlWithAttributesSupport = config.enableXmlWithAttributesSupport,
+            enableMultipartFormDataSupport = config.enableMultipartFormDataSupport,
         )
 
         init {
-            if(probUseDefault < 0 || probUseDefault > 1){
+            if(probUseDefault !in 0.0..1.0){
                 throw IllegalArgumentException("Invalid probUseDefault: $probUseDefault")
             }
-            if(probUseExamples < 0 || probUseExamples > 1){
+            if(probUseExamples !in 0.0..1.0){
                 throw IllegalArgumentException("Invalid probUseExamples: $probUseExamples")
             }
         }
@@ -172,19 +190,19 @@ object RestActionBuilderV3 {
         val swagger = schemaHolder.main.schemaParsed
 
         swagger.paths
-                .forEach { e ->
-                    handlePathItem(
-                        e.key,
-                        e.value,
-                        messages,
-                        endpointsToSkip,
-                        skipped,
-                        actionCluster,
-                        schemaHolder,
-                        options,
-                        errorEndpoints
-                    )
-                }
+            .forEach { e ->
+                handlePathItem(
+                    e.key,
+                    e.value,
+                    messages,
+                    endpointsToSkip,
+                    skipped,
+                    actionCluster,
+                    schemaHolder,
+                    options,
+                    errorEndpoints
+                )
+            }
 
         ActionBuilderUtil.verifySkipped(skipped,endpointsToSkip)
         ActionBuilderUtil.printActionNumberInfo("RESTful API", actionCluster.size, skipped.size, errorEndpoints.size)
@@ -467,11 +485,11 @@ object RestActionBuilderV3 {
             val links = operation.responses
                 ?.filter { it.value.links != null && it.value.links.isNotEmpty() }
                 ?.flatMap { res ->  res.value.links.map {
-                        Triple(
-                            res.key, // the status code, used as key to identify the response object
-                            it.key,  // the name of the link
-                            it.value) // the actual link definition
-                    }
+                    Triple(
+                        res.key, // the status code, used as key to identify the response object
+                        it.key,  // the name of the link
+                        it.value) // the actual link definition
+                }
                 }
                 ?.mapNotNull {
                     try {
@@ -534,19 +552,19 @@ object RestActionBuilderV3 {
         val params = mutableListOf<Param>()
 
         removeDuplicatedParams(schemaHolder,currentSchema,operation,messages)
-                .forEach { p ->
+            .forEach { p ->
 
-                    if(p.`$ref` != null){
-                        val param = SchemaUtils.getReferenceParameter(schemaHolder,currentSchema, p.`$ref`, messages)
-                        if(param == null){
-                            messages.add("Failed to handle ${p.`$ref`} in $verb:$restPath")
-                        } else {
-                            handleParam(param, schemaHolder, currentSchema, params, options, messages)
-                        }
+                if(p.`$ref` != null){
+                    val param = SchemaUtils.getReferenceParameter(schemaHolder,currentSchema, p.`$ref`, messages)
+                    if(param == null){
+                        messages.add("Failed to handle ${p.`$ref`} in $verb:$restPath")
                     } else {
-                        handleParam(p, schemaHolder,currentSchema, params, options, messages)
+                        handleParam(param, schemaHolder, currentSchema, params, options, messages)
                     }
+                } else {
+                    handleParam(p, schemaHolder,currentSchema, params, options, messages)
                 }
+            }
 
         handleBodyPayload(operation, verb, restPath, schemaHolder, currentSchema, params, options, messages)
 
@@ -626,7 +644,7 @@ object RestActionBuilderV3 {
         // TODO: Adding description to the parameter occurs in multiple places. This can be refactored.
         when (p.`in`) {
             "query" -> params.add(QueryParam(name, gene, p.explode ?: true, p.style ?: Parameter.StyleEnum.FORM)
-                    .apply { this.description = description })
+                .apply { this.description = description })
             /*
                 a path is inside a Disruptive Gene, because there are cases in which we want to prevent
                 mutation. Note that 1.0 means can always be mutated
@@ -703,7 +721,6 @@ object RestActionBuilderV3 {
             body
         }
 
-        val name = "body"
         val description = operation.description ?: null
 
         val bodies = resolvedBody.content?.filter {
@@ -742,31 +759,72 @@ object RestActionBuilderV3 {
             listOf()
         }
 
-        var gene = getGene("body", obj.schema, schemaHolder,currentSchema, referenceClassDef = null, options = options, messages = messages, examples = examples)
+        val isJsonPatch = options.enableJsonPatchSupport &&
+                verb == HttpVerb.PATCH && bodies.keys.any { it.contains("json-patch", ignoreCase = true) }
 
+        val name: String
+        var gene: Gene
+        if (isJsonPatch) {
+            /*
+                The body is a JSON Patch document (RFC 6902), not a regular object, so it is not built
+                from the media type schema. resolveResourceSchema returns the OpenAPI Schema of the resource
+                being patched, found by inspecting sibling operations on the same path (GET 2xx response,
+                else PUT/POST requestBody). We turn that schema into a gene via getGene so the patch
+                operations reference real fields/paths of the resource, and use it to seed the
+                JsonPatchDocumentGene. If no resource schema is found, the gene is still built with
+                resourceGene == null and emits generic, structurally valid operations.
+            */
+            name = "body"
+            val patchResourceSchema = JsonPatchSchemaResolver.resolveResourceSchema(
+                operation,
+                schemaHolder,
+                currentSchema,
+                messages
+            )
+            val resourceGene = patchResourceSchema?.let {
+                getGene(name, it, schemaHolder, currentSchema, referenceClassDef = null, options = options, messages = messages)
+            }
+            gene = JsonPatchDocumentGene(name, resourceGene)
+        } else {
+            if (options.enableXmlWithAttributesSupport) {
+                // $ref schemas do not carry XML metadata; resolving the reference is required to obtain the correct XML element name from the target schema
+                val deref = obj.schema.`$ref`?.let { ref -> SchemaUtils.getReferenceSchema(schemaHolder, currentSchema, ref, messages) } ?: obj.schema
+                name = deref?.xml?.name ?: deref?.`$ref`?.substringAfterLast("/") ?: "body"
+            } else {
+                // Pre-feature behaviour: the body gene was unconditionally named "body"
+                name = "body"
+            }
+            gene = getGene(name, obj.schema, schemaHolder, currentSchema, referenceClassDef = null, options = options, messages = messages, examples = examples)
+        }
 
         if (resolvedBody.required != true && gene !is OptionalGene) {
             gene = OptionalGene(name, gene)
         }
 
-        val contentTypeGene = EnumGene<String>("contentType", bodies.keys)
+        val contentTypeGene = EnumGene<String>(RestGeneSpecialNames.CONTENT_TYPE.name, bodies.keys)
         val bodyParam = BodyParam(gene, contentTypeGene)
             .apply { this.description = description }
 
         val ns = bodyParam.notSupportedContentTypes
         if(ns.isNotEmpty()){
-            messages.add("Not supported content types for body payload in $verb:$restPath : ${ns.joinToString()}")
+            messages.add("Not supported content types for body payload in $verb:$restPath : ${ns.joinToString()}." +
+                    " It will be treated as TEXT.")
         }
 
         params.add(bodyParam)
     }
 
     private fun possiblyOptional(gene: Gene, required: Boolean?): Gene {
-
         if (required != true) {
             return OptionalGene(gene.name, gene).also { GeneUtils.preventCycles(it) }
         }
+        return gene
+    }
 
+    private fun possiblyNullable(gene: Gene, nullable: Boolean) : Gene{
+        if(nullable) {
+            return NullableGene(gene.name, gene).also { GeneUtils.preventCycles(it) }
+        }
         return gene
     }
 
@@ -787,7 +845,44 @@ object RestActionBuilderV3 {
             return createObjectFromReference(name, schema.`$ref`, schemaHolder,currentSchema, history, options, examples, messages)
         }
 
+        /*
+            Nullability is different between 3.0.0 and 3.1.0.
+            Also, it makes sense ONLY for body payloads... as it is not possible to express null values
+            in a URL (eg query and path), as those have ambiguous interpretation, eg,
+            something like /api?x or /api?x= would in most cases treated as an empty string "".
+         */
+        val nullable_3_0 = (schema.nullable != null && schema.nullable)
+        val nullable_3_1 = schema.types?.contains("null") ?: false
+        val nullable = nullable_3_0 || nullable_3_1
 
+        val gene = getNonNullGene(
+            schema,
+            name,
+            options,
+            messages,
+            isInPath,
+            examples,
+            schemaHolder,
+            currentSchema,
+            history,
+            referenceClassDef
+        )
+
+        return possiblyNullable(gene, nullable)
+    }
+
+    private fun getNonNullGene(
+        schema: Schema<*>,
+        name: String,
+        options: Options,
+        messages: MutableList<String>,
+        isInPath: Boolean,
+        examples: List<Pair<Any, String?>>,
+        schemaHolder: RestSchema,
+        currentSchema: SchemaOpenAPI,
+        history: Deque<String>,
+        referenceClassDef: String?
+    ): Gene {
         /*
             https://github.com/OAI/OpenAPI-Specification/blob/3.0.1/versions/3.0.1.md#dataTypeFormat
 
@@ -805,7 +900,8 @@ object RestActionBuilderV3 {
         password	    string	password	Used to hint UIs the input needs to be obscured.
          */
 
-        val type = schema.type?:schema.types?.firstOrNull()
+
+        val type = schema.type ?: schema.types?.firstOrNull { it != "null" }
         val format = schema.format
 
         if (schema.enum?.isNotEmpty() == true) {
@@ -833,26 +929,28 @@ object RestActionBuilderV3 {
                  */
                 "integer" -> {
                     if (format == "int64") {
-                        val data : MutableList<Long> = schema.enum
-                                .map{ if(it is String) it.toLong() else it as Long}
-                                .toMutableList()
+                        val data: MutableList<Long> = schema.enum
+                            .map { if (it is String) it.toLong() else it as Long }
+                            .toMutableList()
 
                         return EnumGene(name, (data).apply { add(42L) })
                     }
 
-                    val data : MutableList<Int> = schema.enum
-                            .map{ if(it is String) it.toInt() else it as Int}
-                            .toMutableList()
+                    val data: MutableList<Int> = schema.enum
+                        .map { if (it is String) it.toInt() else it as Int }
+                        .toMutableList()
                     return EnumGene(name, data.apply { add(42) })
                 }
+
                 "number" -> {
                     //if (format == "double" || format == "float") {
                     //TODO: Is it always casted as Double even for Float??? Need test
-                    val data : MutableList<Double> = schema.enum
-                            .map{ if(it is String) it.toDouble() else it as Double}
-                            .toMutableList()
+                    val data: MutableList<Double> = schema.enum
+                        .map { if (it is String) it.toDouble() else it as Double }
+                        .toMutableList()
                     return EnumGene(name, data.apply { add(42.0) })
                 }
+
                 else -> messages.add("Cannot handle enum of type: $type")
             }
         }
@@ -861,16 +959,80 @@ object RestActionBuilderV3 {
         //first check for "optional" format
         when (format?.lowercase()) {
             "char" -> return buildStringGeneForChar(name, isInPath)
-            "int8","int16","int32" -> return createNonObjectGeneWithSchemaConstraints(schema, name, IntegerGene::class.java, options, null, isInPath, examples,format, messages)//IntegerGene(name)
-            "int64" -> return createNonObjectGeneWithSchemaConstraints(schema, name, LongGene::class.java, options, null, isInPath, examples, messages = messages) //LongGene(name)
-            "double" -> return createNonObjectGeneWithSchemaConstraints(schema, name, DoubleGene::class.java, options, null, isInPath, examples, messages = messages)//DoubleGene(name)
-            "float" -> return createNonObjectGeneWithSchemaConstraints(schema, name, FloatGene::class.java, options, null, isInPath, examples, messages = messages)//FloatGene(name)
-            "password" -> return createNonObjectGeneWithSchemaConstraints(schema, name, StringGene::class.java, options, null, isInPath, examples, messages = messages)//StringGene(name) //nothing special to do, it is just a hint
-            "binary" -> return createNonObjectGeneWithSchemaConstraints(schema, name, StringGene::class.java, options, null, isInPath, examples, messages = messages)//StringGene(name) //does it need to be treated specially?
-            "byte" -> return createNonObjectGeneWithSchemaConstraints(schema, name, Base64StringGene::class.java, options, null, isInPath, examples, messages = messages)//Base64StringGene(name)
+            "int8", "int16", "int32" -> return createNonObjectGeneWithSchemaConstraints(
+                schema,
+                name,
+                IntegerGene::class.java,
+                options,
+                null,
+                isInPath,
+                examples,
+                format,
+                messages
+            )//IntegerGene(name)
+            "int64" -> return createNonObjectGeneWithSchemaConstraints(
+                schema,
+                name,
+                LongGene::class.java,
+                options,
+                null,
+                isInPath,
+                examples,
+                messages = messages
+            ) //LongGene(name)
+            "double" -> return createNonObjectGeneWithSchemaConstraints(
+                schema,
+                name,
+                DoubleGene::class.java,
+                options,
+                null,
+                isInPath,
+                examples,
+                messages = messages
+            )//DoubleGene(name)
+            "float" -> return createNonObjectGeneWithSchemaConstraints(
+                schema,
+                name,
+                FloatGene::class.java,
+                options,
+                null,
+                isInPath,
+                examples,
+                messages = messages
+            )//FloatGene(name)
+            "password" -> return createNonObjectGeneWithSchemaConstraints(
+                schema,
+                name,
+                StringGene::class.java,
+                options,
+                null,
+                isInPath,
+                examples,
+                messages = messages
+            )//StringGene(name) //nothing special to do, it is just a hint
+            "binary" -> return createNonObjectGeneWithSchemaConstraints(
+                schema,
+                name,
+                StringGene::class.java,
+                options,
+                null,
+                isInPath,
+                examples,
+                messages = messages
+            )//StringGene(name) //does it need to be treated specially?
+            "byte" -> return createNonObjectGeneWithSchemaConstraints(
+                schema,
+                name,
+                Base64StringGene::class.java,
+                options,
+                null,
+                isInPath,
+                examples,
+                messages = messages
+            )//Base64StringGene(name)
             "date", "local-date" -> return DateGene(name, onlyValidDates = !options.invalidData)
             "date-time", "local-date-time" -> {
-                val f = if(format?.lowercase() == "date-time"){
+                val f = if (format.lowercase() == "date-time") {
                     FormatForDatesAndTimes.RFC3339
                 } else {
                     FormatForDatesAndTimes.ISO_LOCAL
@@ -882,7 +1044,15 @@ object RestActionBuilderV3 {
                     time = TimeGene("time", onlyValidTimes = !options.invalidData, format = f)
                 )
             }
+
             else -> if (format != null) {
+
+                if(options.enableAdvancedFormats){
+                    val advanced = createGeneBasedOnAdvancedFormats(format,schema,name, options, messages, isInPath, examples, schemaHolder, currentSchema, history, referenceClassDef)
+                    if(advanced != null) {
+                        return advanced
+                    }
+                }
                 messages.add("Unhandled format '$format' for '$name'")
             }
         }
@@ -892,15 +1062,57 @@ object RestActionBuilderV3 {
                 the JSON Schema definition
          */
         when (type?.lowercase()) {
-            "integer" -> return createNonObjectGeneWithSchemaConstraints(schema, name, IntegerGene::class.java, options, null, isInPath, examples, messages = messages)//IntegerGene(name)
-            "number" -> return createNonObjectGeneWithSchemaConstraints(schema, name, DoubleGene::class.java, options, null, isInPath, examples, messages = messages)//DoubleGene(name)
+            "integer" -> return createNonObjectGeneWithSchemaConstraints(
+                schema,
+                name,
+                IntegerGene::class.java,
+                options,
+                null,
+                isInPath,
+                examples,
+                messages = messages
+            )
+            "number" -> return createNonObjectGeneWithSchemaConstraints(
+                schema,
+                name,
+                DoubleGene::class.java,
+                options,
+                null,
+                isInPath,
+                examples,
+                messages = messages
+            )//DoubleGene(name)
             "boolean" -> return BooleanGene(name)
             "string" -> {
                 return if (schema.pattern == null) {
-                    createNonObjectGeneWithSchemaConstraints(schema, name, StringGene::class.java, options, null, isInPath, examples, messages = messages) //StringGene(name)
+                    val gene = createNonObjectGeneWithSchemaConstraints(
+                        schema,
+                        name,
+                        StringGene::class.java,
+                        options,
+                        null,
+                        isInPath,
+                        examples,
+                        messages = messages
+                    ) //StringGene(name)
+
+                    if(options.inferFormatFromNames){
+                        heuristicInferFormatFromName(gene, name, schema.description)
+                    } else {
+                        gene
+                    }
                 } else {
                     try {
-                        createNonObjectGeneWithSchemaConstraints(schema, name, RegexGene::class.java, options, null, isInPath, examples, messages = messages)
+                        createNonObjectGeneWithSchemaConstraints(
+                            schema,
+                            name,
+                            RegexGene::class.java,
+                            options,
+                            null,
+                            isInPath,
+                            examples,
+                            messages = messages
+                        )
                     } catch (e: Exception) {
                         /*
                             TODO: if the Regex is syntactically invalid, we should warn
@@ -910,39 +1122,135 @@ object RestActionBuilderV3 {
                             When 100% support, then tell user that it is his/her fault
                          */
                         LoggingUtil.uniqueWarn(log, "Cannot handle regex: ${schema.pattern}")
-                        createNonObjectGeneWithSchemaConstraints(schema, name, StringGene::class.java, options, null, isInPath, examples, messages = messages)//StringGene(name)
+                        createNonObjectGeneWithSchemaConstraints(
+                            schema,
+                            name,
+                            StringGene::class.java,
+                            options,
+                            null,
+                            isInPath,
+                            examples,
+                            messages = messages
+                        )//StringGene(name)
                     }
                 }
             }
+
             "array" -> {
                 if (schema is ArraySchema || schema is JsonSchema) {
 
                     val arrayType: Schema<*> = if (schema.items == null) {
                         LoggingUtil.uniqueWarn(
                             log, "Array type '$name' is missing mandatory field 'items' to define its type." +
-                                " Defaulting to 'string'")
+                                    " Defaulting to 'string'"
+                        )
                         Schema<Any>().also { it.type = "string" }
                     } else {
                         schema.items
                     }
-                    val template = getGene(name + "_item", arrayType, schemaHolder,currentSchema, history, referenceClassDef = null, options = options, messages = messages)
 
-                    //Could still have an empty []
-//                    if (template is CycleObjectGene) {
-//                        return CycleObjectGene("<array> ${template.name}")
-//                    }
-                    return createNonObjectGeneWithSchemaConstraints(schema, name, ArrayGene::class.java, options, template, isInPath, examples, messages = messages)//ArrayGene(name, template)
+                    // Use the XML name from schema.xml.name (the name of the array element in XML)
+                    // if available, otherwise fallback to name + "_item".
+                    // When XML support is disabled, ignore xml.name and always use the generic
+                    // fallback, so we emulate the pre-XML-support behaviour of EvoMaster.
+                    val itemName = if (options.enableXmlWithAttributesSupport) {
+                        schema.xml?.name ?: (name + "_item")
+                    } else {
+                        name + "_item"
+                    }
+                    val template = getGene(
+                        itemName,
+                        arrayType,
+                        schemaHolder,
+                        currentSchema,
+                        history,
+                        referenceClassDef = null,
+                        options = options,
+                        messages = messages
+                    )//Could still have an empty []
+                    //if (template is CycleObjectGene) {
+                    //return CycleObjectGene("<array> ${template.name}")
+                    //}
+                    return createNonObjectGeneWithSchemaConstraints(
+                        schema,
+                        name,
+                        ArrayGene::class.java,
+                        options,
+                        template,
+                        isInPath,
+                        examples,
+                        messages = messages
+                    )//ArrayGene(name, template)
                 } else {
                     LoggingUtil.uniqueWarn(log, "Invalid 'array' definition for '$name'")
                 }
             }
 
             "object" -> {
-                return createObjectGene(name, schema, schemaHolder,currentSchema, history, referenceClassDef, options, examples, messages)
+                val properties = schema.properties ?: emptyMap()
+
+                // Only detect XML attribute fields when XML support is enabled. When disabled,
+                // this stays empty so we fall back to a plain ObjectGene (attributes rendered as
+                // child elements), matching how EvoMaster behaved before ObjectWithAttributesGene.
+                val attributeNames = if (options.enableXmlWithAttributesSupport) {
+                    properties
+                        .filterValues { it.xml?.attribute == true }
+                        .keys
+                } else {
+                    emptySet()
+                }
+
+                if (attributeNames.isNotEmpty()) {
+                    val fields = properties.map { (propName, propSchema) ->
+                        getGene(
+                            propName,
+                            propSchema,
+                            schemaHolder,
+                            currentSchema,
+                            history,
+                            referenceClassDef,
+                            options,
+                            false,
+                            examples,
+                            messages
+                        )
+                    }
+
+                    return ObjectWithAttributesGene(
+                        name = schema.xml?.name ?: name,
+                        fixedFields = fields,
+                        refType = referenceClassDef,
+                        isFixed = true,
+                        template = null,
+                        additionalFields = null,
+                        attributeNames = attributeNames
+                    )
+                } else {
+                    return createObjectGene(
+                        name,
+                        schema,
+                        schemaHolder,
+                        currentSchema,
+                        history,
+                        referenceClassDef,
+                        options,
+                        examples,
+                        messages
+                    )
+                }
             }
             //TODO file is a hack. I want to find a more elegant way of dealing with it (BMR)
             //FIXME is this even a standard type???
-            "file" -> return createNonObjectGeneWithSchemaConstraints(schema, name, StringGene::class.java, options, null, isInPath, examples, messages = messages) //StringGene(name)
+            "file" -> return createNonObjectGeneWithSchemaConstraints(
+                schema,
+                name,
+                StringGene::class.java,
+                options,
+                null,
+                isInPath,
+                examples,
+                messages = messages
+            )
         }
 
         if ((name == "body" || referenceClassDef != null) && schema.properties?.isNotEmpty() == true) {
@@ -950,17 +1258,266 @@ object RestActionBuilderV3 {
                 name == "body": This could happen when parsing a body-payload as formData
                 referenceClassDef != null : this could happen when parsing a reference of a constraint (eg, anyOf) of the additionalProperties
             */
-            return createObjectGene(name, schema, schemaHolder,currentSchema, history, referenceClassDef, options, examples, messages)
+            return createObjectGene(
+                name,
+                schema,
+                schemaHolder,
+                currentSchema,
+                history,
+                referenceClassDef,
+                options,
+                examples,
+                messages
+            )
         }
 
         if (type == null && format == null) {
             return createGeneWithUnderSpecificTypeAndSchemaConstraints(
-                schema, name, schemaHolder,currentSchema, history, referenceClassDef,
-                options, null, isInPath, examples, messages)
-        //createNonObjectGeneWithSchemaConstraints(schema, name, StringGene::class.java, enableConstraintHandling) //StringGene(name)
+                schema, name, schemaHolder, currentSchema, history, referenceClassDef,
+                options, null, isInPath, examples, messages
+            )
+            //createNonObjectGeneWithSchemaConstraints(schema, name, StringGene::class.java, enableConstraintHandling) //StringGene(name)
         }
 
         throw IllegalArgumentException("Cannot handle combination $type/$format")
+    }
+
+    private fun heuristicInferFormatFromName(
+        gene: Gene,
+        name: String,
+        description: String?
+    ): Gene {
+
+        //TODO should handle min/max length constraint, if any
+
+        //RFC 3339, RFC-3339, RFC3339
+        //ISO 8601, ISO-8601, ISO8601
+        val rfc3339 = description!=null && description.contains("rfc",true) && description.contains("3339",true)
+        val iso8601 = description!=null && description.contains("iso",true) && description.contains("8601",true)
+
+        handleNameMatch("uuid",name,gene){n -> UUIDGene(n)}?.let { return it }
+        handleNameMatch("email",name,gene){n -> createEmailGene(n)}?.let { return it }
+        handleNameMatch("uri", name, gene){n -> UriGene(n) }?.let { return it }
+        handleNameMatch("url", name, gene){n -> UrlHttpGene(n) }?.let { return it }
+        handleNameMatch("website", name, gene){n -> UrlHttpGene(n) }?.let { return it }
+        handleNameMatch("href", name, gene){n -> UrlHttpGene(n) }?.let { return it }
+        handleNameMatch("date", name, gene){n ->
+            if(rfc3339) {
+                DateTimeGene(n, format = FormatForDatesAndTimes.RFC3339)
+            } else if(iso8601){
+                DateTimeGene(n, format = FormatForDatesAndTimes.ISO_LOCAL)
+            } else {
+                DateGene(n)
+            }
+        }?.let { return it }
+
+        if(description == null){
+            //nothing we can infer further
+            return gene
+        }
+
+        //if no name match, look at description, if any
+        return when{
+            rfc3339 ->  handleDescriptionMatch(name,gene){DateTimeGene(name, format = FormatForDatesAndTimes.RFC3339)}
+            iso8601 ->  handleDescriptionMatch(name,gene){DateTimeGene(name, format = FormatForDatesAndTimes.ISO_LOCAL)}
+            StringUtils.hasWord(description,"uuid") -> handleDescriptionMatch(name,gene){n -> UUIDGene(n) }
+            StringUtils.hasWord(description,"date") -> handleDescriptionMatch(name,gene){n -> DateGene(n) }
+            StringUtils.hasWord(description,"uri") -> handleDescriptionMatch(name,gene){n -> UriGene(n)}
+            StringUtils.hasWord(description,"url") -> handleDescriptionMatch(name,gene){n -> UrlHttpGene(n) }
+            StringUtils.hasWord(description,"urls") -> handleDescriptionMatch(name,gene){n -> UrlHttpGene(n) }
+            StringUtils.hasWord(description,"website") -> handleDescriptionMatch(name,gene){n -> UrlHttpGene(n) }
+            StringUtils.hasWord(description,"href") -> handleDescriptionMatch(name,gene){n -> UrlHttpGene(n) }
+            StringUtils.hasWord(description,"email") -> handleDescriptionMatch(name,gene){n ->  createEmailGene(n)}
+            else -> gene
+        }
+    }
+
+    private fun handleDescriptionMatch(
+        name: String,
+        gene: Gene,
+        producer: (String) -> Gene): Gene {
+
+        val pDescriptionMatch = 0.5
+
+        return ChoiceGene(name, listOf(producer(name), gene), probabilities = listOf(pDescriptionMatch, 1-pDescriptionMatch))
+    }
+
+    private fun handleNameMatch(format: String, name: String, gene: Gene, producer: (String) -> Gene) : Gene?{
+
+        val pNameMatch = 0.8
+
+        if(name.startsWith(format,true) || name.endsWith(format, true)) {
+            val choice = ChoiceGene(name, listOf(producer(name),gene), probabilities = listOf(pNameMatch,1.0-pNameMatch))
+            return choice
+        }
+
+        return null
+    }
+
+    private fun createGeneBasedOnAdvancedFormats(
+        format: String,
+        schema: Schema<*>,
+        name: String,
+        options: Options,
+        messages: MutableList<String>,
+        isInPath: Boolean,
+        examples: List<Pair<Any, String?>>,
+        schemaHolder: RestSchema,
+        currentSchema: SchemaOpenAPI,
+        history: Deque<String>,
+        referenceClassDef: String?
+    ) : Gene? {
+
+        /*
+        https://spec.openapis.org/registry/format/
+
+        The (YES) are new, whereas (NO) are already supported since 3.0
+
+        Value 	Description 	JSON Data Type 	Source 	Deprecated
+        (YES) base64url 	Binary data encoded as a url-safe string as defined in RFC4648 	string 	  	Yes
+        (NO)  binary 	any sequence of octets 	string 	OAS 	Yes
+        (NO)  byte 	base64 encoded data as defined in RFC4648 	string 	OAS 	Yes
+        (YES) char 	A single character 	string 	  	No
+        (YES) commonmark 	commonmark-formatted text 	string 	OAS 	No
+        (YES) date-time-local 	RFC3339 date-time without the timezone component 	string 	RFC 3339 	No
+        (NO)  date-time 	date and time as defined by date-time - RFC3339 	string 	JSON Schema 	No
+        (NO)  date 	date as defined by full-date - RFC3339 	string 	JSON Schema 	No
+        (YES) decimal 	A fixed point decimal number of unspecified precision and range 	string, number 	  	No
+        (YES) decimal128 	A decimal floating-point number with 34 significant decimal digits 	string, number 	  	No
+        (YES) double-int 	an integer that can be stored in an IEEE 754 double-precision number without loss of precision 	number 	  	No
+        (NO)  double 	double precision floating point number 	number 	OAS 	No
+        (YES) duration 	duration as defined by duration - RFC3339 	string 	JSON Schema 	No
+        (YES) email 	An email address as defined as Mailbox in RFC5321 	string 	JSON Schema 	No
+        (NO)  float 	single precision floating point number 	number 	OAS 	No
+        (YES) hostname 	A host name as defined by RFC1123 	string 	JSON Schema 	No
+        (YES) html 	HTML-formatted text 	string 	OAS 	No
+        (YES) http-date 	date and time as defined by HTTP-date - RFC7231 	string 	  	No
+        (YES) idn-email 	An email address as defined as Mailbox in RFC6531 	string 	JSON Schema 	No
+        (YES) idn-hostname 	An internationalized host name as defined by RFC5890 	string 	JSON Schema 	No
+        (YES) int16 	signed 16-bit integer 	number 	  	No
+        (NO)  int32 	signed 32-bit integer 	number 	OAS 	No
+        (NO)  int64 	signed 64-bit integer 	number, string 	OAS 	No
+        (YES) int8 	signed 8-bit integer 	number 	OAS 	No
+        (YES) ipv4 	An IPv4 address as defined as dotted-quad by RFC2673 	string 	JSON Schema 	No
+        (YES) ipv6 	An IPv6 address as defined by RFC4673 	string 	JSON Schema 	No
+        (YES) iri-reference 	A Internationalized Resource Identifier as defined in RFC3987 	string 	JSON Schema 	No
+        (YES) iri 	A Internationalized Resource Identifier as defined in RFC3987 	string 	JSON Schema 	No
+        (YES) json-pointer 	A JSON string representation of a JSON Pointer as defined in RFC6901 	string 	JSON Schema 	No
+        (YES) media-range 	A media type as defined by the media-range ABNF production in RFC9110. 	string 	OpenAPI 	No
+        (NO)  password 	a string that hints to obscure the value. 	string 	OAS 	No
+        (YES) regex 	A regular expression as defined in ECMA-262 	string 	JSON Schema 	No
+        (YES) relative-json-pointer 	A JSON string representation of a relative JSON Pointer as defined in draft RFC 01 	string 	JSON Schema 	No
+        (YES) sf-binary 	structured fields byte sequence as defined in [RFC8941] 	string 	RFC 8941 	No
+        (YES) sf-boolean 	structured fields boolean as defined in [RFC8941] 	string 	RFC 8941 	No
+        (YES) sf-decimal 	structured fields decimal as defined in [RFC8941] 	number 	RFC 8941 	No
+        (YES) sf-integer 	structured fields integer as defined in [RFC8941] 	number 	RFC 8941 	No
+        (YES) sf-string 	structured fields string as defined in [RFC8941] 	string 	RFC 8941 	No
+        (YES) sf-token 	structured fields token as defined in [RFC8941] 	string 	RFC 8941 	No
+        (YES) time-local 	RFC3339 time without the timezone component 	string 	RFC 3339 	No
+        (YES) time 	time as defined by full-time - RFC3339 	string 	JSON Schema 	No
+        (YES) uint16 	unsigned 16-bit integer 	number 	OAS 	No
+        (YES) uint32 	unsigned 32-bit integer 	number 	OAS 	No
+        (YES) uint64 	unsigned 64-bit integer 	number, string 	OAS 	No
+        (YES) uint8 	unsigned 8-bit integer 	number 	OAS 	No
+        (YES) unixtime 	seconds since Jan 1st 1970 - IEEE1003.1-2024/POSIX.1-2024 	number, string 	IEEE1003.1-2024 	No
+        (YES) uri-reference 	A URI reference as defined in RFC3986 	string 	JSON Schema 	No
+        (YES) uri-template 	A URI Template as defined in RFC6570 	string 	JSON Schema 	No
+        (YES) uri 	A Uniform Resource Identifier as defined in RFC3986 	string 	JSON Schema 	No
+        (YES) uuid 	A Universally Unique IDentifier as defined in RFC4122 	string 	JSON Schema 	No
+         */
+
+        when(format){
+            "uuid" -> return UUIDGene(name)
+            "uri" -> return UriGene(name)
+            "email" -> return createEmailGene(name, options)
+            //unsigned bounded integers (signed int8/int16/int32/int64)
+            "uint8" -> return IntegerGene(name, min = 0, max = 255)
+            "uint16" -> return IntegerGene(name, min = 0, max = 65535)
+            "uint32" -> return LongGene(name, min = 0L, max = 4294967295L)
+            //BigIntegerGene is internally Long-bounded, so the full uint64 max (2^64-1) is not
+            //representable; cap at Long.MAX_VALUE, which is the effective range the gene supports
+            "uint64" -> return BigIntegerGene(name, min = BigInteger.ZERO, max = BigInteger.valueOf(Long.MAX_VALUE))
+            //string formats sampled via regex. These are not full RFC validators; they just
+            //need to produce syntactically valid values.
+            //idn-hostname allows Unicode, but here we sample the ASCII subset (still valid)
+            "hostname", "idn-hostname" -> return regexGene(name, "^[a-z][a-z0-9]{0,9}(\\.[a-z][a-z0-9]{0,9}){0,3}$")
+            //base64url length cannot be 4k+1; groups of 4 plus a final 2- or 3-char quantum
+            "base64url" -> return regexGene(name, "^(?:[A-Za-z0-9_-]{4})*[A-Za-z0-9_-]{2,3}$")
+            "json-pointer" -> return regexGene(name, "^(/[a-zA-Z0-9]{1,5}){0,4}$")
+            "media-range" -> return regexGene(name, "^[a-z]{1,10}/[a-z0-9][a-z0-9.+-]{0,9}$")
+            //iri-reference allows Unicode; here we sample the ASCII subset (an absolute http/https URI)
+            "uri-reference", "iri-reference" -> return regexGene(name, "^https?://[a-z]{2,8}\\.[a-z]{2,4}(/[a-z0-9]{1,8}){0,3}$")
+            //a trivial literal string is itself a valid ECMA-262 regex
+            "regex" -> return regexGene(name, "^[a-z0-9]{1,10}$")
+            //RFC8941 structured-field boolean is serialized as exactly '?0' or '?1'
+            "sf-boolean" -> return regexGene(name, "^\\?[01]$")
+            //iri allows Unicode; here we sample the ASCII subset (an absolute http/https URI)
+            "iri" -> return regexGene(name, "^https?://[a-z]{2,8}\\.[a-z]{2,4}(/[a-z0-9]{1,8}){0,3}$")
+            //idn-email allows Unicode; here we sample the ASCII subset
+            "idn-email" -> return regexGene(name, "^[a-z0-9]{2,8}@[a-z0-9]{2,8}\\.[a-z]{2,4}$")
+            //relative JSON pointer: a non-negative integer followed by an optional JSON pointer
+            "relative-json-pointer" -> return regexGene(name, "^(0|[1-9][0-9]{0,2})(/[a-zA-Z0-9]{1,5}){0,4}$")
+            //RFC8941 sf-string: printable ASCII wrapped in double quotes
+            "sf-string" -> return regexGene(name, "^\"[a-z0-9 ]{0,10}\"$")
+            //RFC8941 sf-token: starts with ALPHA or '*', then token characters
+            "sf-token" -> return regexGene(name, "^[a-zA-Z*][a-zA-Z0-9!#%&'*+.^_|~:/-]{0,15}$")
+            //RFC8941 sf-binary: standard base64 wrapped in colons
+            "sf-binary" -> return regexGene(name, "^:(?:[A-Za-z0-9+/]{4})+:$")
+            //RFC6570 URI template: http/https URI whose path segments are literals or {var} expressions
+            "uri-template" -> return regexGene(name, "^https?://[a-z]{2,8}\\.[a-z]{2,4}(/(?:[a-z0-9]{1,8}|\\{[a-z][a-z0-9]{0,7}\\})){1,4}$")
+            //decimal numbers as BigDecimalGene (precision = total significant digits, scale = fraction digits)
+            "decimal" -> return BigDecimalGene(name, precision = 12, scale = 4)
+            "decimal128" -> return BigDecimalGene(name, precision = 34, scale = 10)
+            //RFC8941 sf-decimal: at most 12 integer digits and 3 fractional digits
+            "sf-decimal" -> return BigDecimalGene(name, precision = 15, scale = 3)
+            //time and date-time without/with timezone, reusing the existing datetime genes
+            "time" -> return TimeGene(name, format = FormatForDatesAndTimes.RFC3339, onlyValidTimes = !options.invalidData)
+            "time-local" -> return TimeGene(name, format = FormatForDatesAndTimes.ISO_LOCAL, onlyValidTimes = !options.invalidData)
+            "date-time-local" -> return DateTimeGene(name, onlyValid = !options.invalidData, format = FormatForDatesAndTimes.ISO_LOCAL)
+            //RFC3339 duration (a full ISO-8601 duration)
+            "duration" -> return regexGene(name, "^P[1-9][0-9]{0,2}Y[1-9][0-9]{0,2}M[1-9][0-9]{0,2}DT[1-9][0-9]{0,2}H[1-9][0-9]{0,2}M[1-9][0-9]{0,2}S$")
+            //RFC7231 IMF-fixdate. Day 01-28 is valid in every month, so the calendar date is always valid.
+            "http-date" -> return regexGene(name, "^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), (0[1-9]|1[0-9]|2[0-8]) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} ([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9] GMT$")
+            //IPv4 via the existing InetGene (four octets 0-255)
+            "ipv4" -> return InetGene(name)
+            //IPv6 in full 8-group form (no '::' compression), which is always valid
+            "ipv6" -> return regexGene(name, "^([0-9a-f]{1,4}:){7}[0-9a-f]{1,4}$")
+            //non-negative epoch seconds
+            "unixtime" -> return LongGene(name, min = 0L)
+            //an integer exactly representable as an IEEE-754 double: |n| <= 2^53
+            "double-int" -> return LongGene(name, min = -9007199254740992L, max = 9007199254740992L)
+            //RFC8941 sf-integer: at most 15 digits
+            "sf-integer" -> return LongGene(name, min = -999999999999999L, max = 999999999999999L)
+            //free-form markup text; any string is valid commonmark/html
+            "commonmark", "html" -> return StringGene(name)
+        }
+
+        return null
+    }
+
+    /**
+     * Build a gene that samples strings matching the given JVM regex.
+     * Used for advanced string formats where we only need to produce syntactically valid values,
+     * not to strictly validate every RFC edge case.
+     */
+    private fun regexGene(name: String, regex: String): Gene {
+        return RegexHandler.createGeneForJVM(regex).apply { this.name = name }
+    }
+
+    private fun createEmailGene(
+        name: String,
+        options: Options? = null
+    ): Gene {
+
+        /*
+            A new EmailGene might be on overkill if we can just use a regex.
+            However, RFC5321 is quite complex.
+            This regex is quite simple, but should do.
+            After all, here we just need to sample valid emails, and not verify
+            if a string is a valid email.
+         */
+        return RegexHandler.createGeneForJVM("[A-Za-z0-9]{2,}@[A-Za-z0-9]+\\.[A-Za-z]{2,}")
+            .apply { this.name = name }
     }
 
     /**
@@ -979,8 +1536,8 @@ object RestActionBuilderV3 {
 
         val fields = schema.properties?.entries?.map {
             possiblyOptional(
-                    getGene(it.key, it.value, schemaHolder,currentSchema, history, referenceClassDef = null, options = options, messages = messages),
-                    schema.required?.contains(it.key)
+                getGene(it.key, it.value, schemaHolder,currentSchema, history, referenceClassDef = null, options = options, messages = messages),
+                schema.required?.contains(it.key)
             )
         } ?: listOf()
 
@@ -1096,6 +1653,29 @@ object RestActionBuilderV3 {
                 valueTemplate.copy())
         }
 
+        // Same as above: skip XML attribute detection when XML support is disabled, so the object
+        // is assembled as a plain ObjectGene (pre-XML-support behaviour).
+        val attributeNames = if (options.enableXmlWithAttributesSupport) {
+            schema.properties
+                ?.filter { (_, propSchema) -> propSchema.xml?.attribute == true }
+                ?.map { it.key }
+                ?: emptyList()
+        } else {
+            emptyList()
+        }
+
+        if (attributeNames.isNotEmpty()) {
+            return ObjectWithAttributesGene(
+                name = name,
+                fixedFields = fields,
+                refType = if (schema is ObjectSchema) referenceTypeName ?: schema.title else null,
+                isFixed = true,
+                template = null,
+                additionalFields = null,
+                attributeNames = attributeNames.toSet()
+            )
+        }
+
         return assembleObjectGeneWithConstraints(
             name,
             schema,
@@ -1113,12 +1693,11 @@ object RestActionBuilderV3 {
     }
 
     /**
-     *
      * handled constraints include
      *      - allOf
      *      - anyOf
      *      - oneOf
-     *      - not (OpenAPI not support this yet)
+     *      - not
      */
     private fun assembleObjectGeneWithConstraints(
         name: String,
@@ -1138,42 +1717,67 @@ object RestActionBuilderV3 {
             https://spec.openapis.org/oas/latest.html#discriminator-object
          */
 
-        if (!options.enableConstraintHandling)
+        if (!options.enableConstraintHandling){
             return assembleObjectGene(name, options, schema, fields, additionalFieldTemplate, referenceTypeName, examples, messages)
+        }
+
+        /*
+            THIS IS VERY TRICKY
+            in theory, the use of allOf/anyOf/oneOf/not provides a rich language where many different kinds of
+            constraints can be specified.
+            this is the case when "const" is used in schemas to specify particular values, e.g., oneOf could be then
+            used to specify only particular combinations of field values.
+            the use of "const" is also quite tricky with "not", as can use to say some specific value combinations are not valid.
+            furthermore, those keywords are NOT mutually exclusive.
+
+            support all possible constraint would be a GIGANTIC piece of work... yet, these kinds of constraints do
+            not seem so common, apart for allOf on merging fields.
+            TODO we should have full support, but not high priority task
+         */
+
+        /*
+            A further complication is how to use, and interpret, "examples" values (if any).
+            Eg. what to nested referenced $ref objects that have on examples?
+            should those be merged/hanled like the fields?
+            TODO possibly something to handle (but again, not high priority)
+         */
 
         val allOf = schema.allOf?.map { s->
-            //createObjectGene(name, s, swagger, history, null, enableConstraintHandling)
             getGene(name, s, schemaHolder,currentSchema, history, null, options, messages = messages, examples = examples)
         }
 
         val anyOf = schema.anyOf?.map { s->
-            //createObjectGene(name, s, swagger, history, null, enableConstraintHandling)
             getGene(name, s, schemaHolder,currentSchema, history, null, options, messages = messages, examples = examples)
         }
 
         if (!allOf.isNullOrEmpty() && !anyOf.isNullOrEmpty()){
-            messages.add("Cannot handle allOf and oneOf at same time for a schema with name $name")
-            return assembleObjectGene(name, options, schema, fields, additionalFieldTemplate, referenceTypeName, examples, messages)
+            messages.add("Currently cannot handle allOf and oneOf at same time for a schema with name $name")
         }
 
         val oneOf = schema.oneOf?.map { s->
-            //createObjectGene(name, s, swagger, history, null, enableConstraintHandling)
             getGene(name, s, schemaHolder,currentSchema, history, null, options = options, messages = messages)
         }
 
         if (!oneOf.isNullOrEmpty() && (!allOf.isNullOrEmpty() || !anyOf.isNullOrEmpty())){
-            messages.add("cannot handle oneOf and allOf/oneOf at same time for a schema with name $name")
-            return assembleObjectGene(name, options, schema, fields, additionalFieldTemplate, referenceTypeName, examples, messages)
+            messages.add("Currently cannot handle oneOf and allOf/oneOf at same time for a schema with name $name")
         }
 
         if (!allOf.isNullOrEmpty()){
+
+            if(allOf.size == 1 && fields.isEmpty()){
+                //just use it as it is
+                return allOf[0]
+            }
+
             val allFields = allOf.mapNotNull {
                 when (it) {
+                    is ChoiceGene<*> -> extractOriginalObject(it)?.fields
                     is ObjectGene -> it.fields
                     else -> null
                 }
             }.flatten()
-            return assembleObjectGene(name, options, schema, allFields.plus(fields), additionalFieldTemplate, referenceTypeName, examples, messages)
+            val fields = allFields.plus(fields).distinctBy { it.name }
+            return assembleObjectGene(name, options, schema, fields, additionalFieldTemplate, referenceTypeName, examples, messages)
         }
 
         if (!oneOf.isNullOrEmpty()){
@@ -1195,7 +1799,19 @@ object RestActionBuilderV3 {
             /*
                 currently, we handle anyOf as oneOf plus all combined one
              */
-            return ChoiceGene(name, if (anyOf.size > 1) anyOf.plus(assembleObjectGene(name, options, schema, allFields.plus(fields), additionalFieldTemplate, referenceTypeName, examples, messages)) else anyOf)
+
+            val choices = if (anyOf.size > 1) {
+                anyOf.plus(
+                    assembleObjectGene(
+                        name, options, schema, allFields.plus(fields).distinctBy { it.name },
+                        additionalFieldTemplate, referenceTypeName, examples, messages
+                    )
+                )
+            } else {
+                anyOf
+            }
+
+            return ChoiceGene(name, choices)
 //            /*
 //                handle all combinations of anyOf
 //                comment it out for the moment
@@ -1224,6 +1840,19 @@ object RestActionBuilderV3 {
         return assembleObjectGene(name, options, schema, fields, additionalFieldTemplate, referenceTypeName, examples, messages)
 
         //TODO not
+    }
+
+    private fun extractOriginalObject(choice: ChoiceGene<*>): ObjectGene? {
+        /*
+            this only makes sense if we are in this case:
+            Choice( Choice(examples), Object)
+            in which we would return Object, null otherwise
+         */
+        val children = choice.getViewOfChildren()
+        if(children.size != 2 || children.none { it is UserExamplesGene && it.isUsedForExamples() }){
+            return null
+        }
+        return children.find { it is ObjectGene } as ObjectGene?
     }
 
     /**
@@ -1290,17 +1919,17 @@ object RestActionBuilderV3 {
         val n = examples.map{it.second} // names
 
         val exampleGene = if(examples.isNotEmpty()){
-            ChoiceGene(EXAMPLES_NAME, v, valueNames = n)
+            ChoiceGene(RestGeneSpecialNames.SCHEMA_EXAMPLES.name, v, valueNames = n)
         } else null
         val defaultGene = if(defaultValue != null){
-            duplicateObjectWithExampleFields("default", mainGene, defaultValue)
+            duplicateObjectWithExampleFields(RestGeneSpecialNames.DEFAULT.name, mainGene, defaultValue)
         } else null
 
         /*
             add refClass with title of SchemaObject
             Man: shall we pop history here?
          */
-       return createGeneWithExampleAndDefault(exampleGene,defaultGene,mainGene,options,name)
+        return createGeneWithExampleAndDefault(exampleGene,defaultGene,mainGene,options,name)
     }
 
     private fun duplicateObjectWithExampleFields(name: String, mainGene: ObjectGene, exampleValue: Any): ObjectGene? {
@@ -1314,6 +1943,7 @@ object RestActionBuilderV3 {
             if(exampleValue.has(f.name)){
                 val e = exampleValue.get(f.name)
                 if(e.isTextual){
+                    //WARN: if modify this might need update feedObjectExamplesToDataPool
                     EnumGene<String>(f.name, listOf(asRawString(e.textValue())), 0, false)
                 } else if(e.isObject) {
                     val nested = f.getWrappedGene(ObjectGene::class.java)
@@ -1342,7 +1972,7 @@ object RestActionBuilderV3 {
             mainGene.isFixed,
             mainGene.template?.copy() as PairGene<StringGene,Gene>?,
             mainGene.additionalFields?.map { it.copy() as PairGene<StringGene,Gene>}?.toMutableList()
-            )
+        )
     }
 
     /**
@@ -1427,111 +2057,7 @@ object RestActionBuilderV3 {
     ) : Gene{
 
 
-        val maxInclusive =  if (options.enableConstraintHandling) !(schema.exclusiveMaximum?:false) else true
-        val minInclusive = if (options.enableConstraintHandling) !(schema.exclusiveMinimum?:false) else true
-
-        val mainGene = when(geneClass){
-            // number gene
-            IntegerGene::class.java ->
-            {
-                val minRange: Int
-                val maxRange: Int
-                if (format == "int8") {
-                    minRange = Byte.MIN_VALUE.toInt()
-                    maxRange = Byte.MAX_VALUE.toInt()
-                } else if (format == "int16") {
-                    minRange = Short.MIN_VALUE.toInt()
-                    maxRange = Short.MAX_VALUE.toInt()
-                } else {
-                    minRange = Integer.MIN_VALUE
-                    maxRange = Integer.MAX_VALUE
-                }
-
-                val minConstraint: Int?
-                val maxConstraint: Int?
-                if (options.enableConstraintHandling) {
-                    minConstraint = schema.minimum?.intValueExact()
-                    maxConstraint = schema.maximum?.intValueExact()
-                } else {
-                    minConstraint = null
-                    maxConstraint = null
-                }
-
-                val minValue = if (minConstraint != null) maxOf(minConstraint, minRange) else minRange
-                val maxValue = if (maxConstraint != null) minOf(maxConstraint, maxRange) else maxRange
-
-                IntegerGene(
-                    name,
-                    min = minValue,
-                    max = maxValue,
-                    maxInclusive = maxInclusive,
-                    minInclusive = minInclusive
-                )
-            }
-            LongGene::class.java -> LongGene(
-                    name,
-                    min = if (options.enableConstraintHandling) schema.minimum?.longValueExact() else null,
-                    max = if (options.enableConstraintHandling) schema.maximum?.longValueExact() else null,
-                    maxInclusive = maxInclusive,
-                    minInclusive = minInclusive
-            )
-            FloatGene::class.java -> FloatGene(
-                    name,
-                    min = if (options.enableConstraintHandling) schema.minimum?.toFloat() else null,
-                    max = if (options.enableConstraintHandling) schema.maximum?.toFloat() else null,
-                    maxInclusive = maxInclusive,
-                    minInclusive = minInclusive
-            )
-            DoubleGene::class.java -> DoubleGene(
-                    name,
-                    min = if (options.enableConstraintHandling) schema.minimum?.toDouble() else null,
-                    max = if (options.enableConstraintHandling) schema.maximum?.toDouble() else null,
-                    maxInclusive = maxInclusive,
-                    minInclusive = minInclusive
-            )
-            BigDecimalGene::class.java ->  BigDecimalGene(
-                    name,
-                    min = if (options.enableConstraintHandling) schema.minimum else null,
-                    max = if (options.enableConstraintHandling) schema.maximum else null,
-                    maxInclusive = maxInclusive,
-                    minInclusive = minInclusive
-            )
-            BigIntegerGene::class.java -> BigIntegerGene(
-                    name,
-                    min = if (options.enableConstraintHandling) schema.minimum?.toBigIntegerExact() else null,
-                    max = if (options.enableConstraintHandling) schema.maximum?.toBigIntegerExact() else null,
-                    maxInclusive = maxInclusive,
-                    minInclusive = minInclusive
-            )
-            // string, Base64StringGene and regex gene
-            StringGene::class.java -> buildStringGene(name, options, schema, isInPath)
-            Base64StringGene::class.java ->  Base64StringGene(name, buildStringGene(name, options, schema, isInPath))
-            RegexGene::class.java -> {
-                /*
-                    TODO handle constraints for regex gene
-                    eg,  min and max
-                    also, isInPath
-                 */
-                 RegexHandler.createGeneForEcma262(schema.pattern).apply { this.name = name }
-            }
-            ArrayGene::class.java -> {
-                if (collectionTemplate == null)
-                    throw IllegalArgumentException("cannot create ArrayGene when collectionTemplate is null")
-                ArrayGene(
-                        name,
-                        template = collectionTemplate,
-                        uniqueElements = if (options.enableConstraintHandling) schema.uniqueItems?:false else false,
-                        minSize = if (options.enableConstraintHandling) schema.minItems else null,
-                        maxSize = if (options.enableConstraintHandling) schema.maxItems else null
-                )
-            }
-            else -> throw IllegalStateException("cannot create gene with constraints for gene:${geneClass.name}")
-        }
-
-        // TODO: Seran: Investigate
-        if (mainGene.description.isNullOrBlank()) {
-            mainGene.description = schema.description
-        }
+        val mainGene = createMainGene(options, schema, geneClass, format, name, isInPath, collectionTemplate)
 
         /*
             See:
@@ -1563,7 +2089,7 @@ object RestActionBuilderV3 {
                     "the parser would read it as an array string or simply ignore it. "
             else ""
             messages.add("The use of 'example' inside a Schema Object is deprecated in OpenAPI. Rather use 'examples'." +
-                     " ${arrayM}Read value: $raw")
+                    " ${arrayM}Read value: $raw")
             //TODO a problem here is that currently number arrays would be ignored, and so this message would not written.
             //however, would need to check if still the case in future in new versions of the parser
         }
@@ -1577,12 +2103,12 @@ object RestActionBuilderV3 {
         val defaultGene = if(defaultValue != null){
             when{
                 NumberGene::class.java.isAssignableFrom(geneClass)
-                -> EnumGene("default", listOf(defaultValue.toString()),0,true)
+                    -> EnumGene(RestGeneSpecialNames.DEFAULT.name, listOf(defaultValue.toString()),0,true)
 
                 geneClass == StringGene::class.java
                         || geneClass == Base64StringGene::class.java
                         || geneClass == RegexGene::class.java
-                -> EnumGene<String>("default", listOf(asRawString(defaultValue)),0,false)
+                    -> EnumGene<String>(RestGeneSpecialNames.DEFAULT.name, listOf(asRawString(defaultValue)),0,false)
 
                 //TODO Arrays
                 else -> {
@@ -1600,12 +2126,12 @@ object RestActionBuilderV3 {
         val exampleGene = if(examples.isNotEmpty()){
             when{
                 NumberGene::class.java.isAssignableFrom(geneClass)
-                -> EnumGene(EXAMPLES_NAME, v,0,true, n)
+                    -> EnumGene(RestGeneSpecialNames.SCHEMA_EXAMPLES.name, v,0,true, n)
 
                 geneClass == StringGene::class.java
                         || geneClass == Base64StringGene::class.java
                         || geneClass == RegexGene::class.java
-                -> EnumGene<String>(EXAMPLES_NAME, v,0,false, n)
+                    -> EnumGene<String>(RestGeneSpecialNames.SCHEMA_EXAMPLES.name, v,0,false, n)
 
                 //TODO Arrays
                 else -> {
@@ -1616,6 +2142,156 @@ object RestActionBuilderV3 {
         } else null
 
         return createGeneWithExampleAndDefault(exampleGene, defaultGene, mainGene, options, name)
+    }
+
+    private fun createMainGene(
+        options: Options,
+        schema: Schema<*>,
+        geneClass: Class<*>,
+        format: String?,
+        name: String,
+        isInPath: Boolean,
+        collectionTemplate: Gene?
+    ): Gene {
+
+        /*
+            exclusiveMinimum and exclusiveMaximum differ between schema version 3.0.0 and 3.1.0
+            https://www.openapis.org/blog/2021/02/16/migrating-from-openapi-3-0-to-3-1-0
+
+            Note: in 3.1.0, it is undefined what to do if both minimum and exclusiveMinimum are defined (same issue
+            for max). So, here we ARBITRARILY choose to use only the exclusive constraint, as supporting both
+            would be too much work with practically no meaningful ROI
+         */
+
+        val (minInclusive,minimum) = if(!options.enableConstraintHandling) {
+            Pair(true, schema.exclusiveMinimumValue ?: schema.minimum)
+        } else  if(schema.exclusiveMinimumValue != null){
+            //3.1.0 and above
+            Pair(false,schema.exclusiveMinimumValue)
+        } else {
+            //3.0.0
+            Pair(!(schema.exclusiveMinimum ?: false), schema.minimum)
+        }
+
+        val (maxInclusive, maximum) = if(!options.enableConstraintHandling) {
+            Pair(true, schema.exclusiveMaximumValue ?: schema.maximum)
+        } else  if(schema.exclusiveMaximumValue != null){
+            //3.1.0 and above
+            Pair(false,schema.exclusiveMaximumValue)
+        } else {
+            //3.0.0
+            Pair(!(schema.exclusiveMaximum ?: false),schema.maximum)
+        }
+
+
+        val mainGene = when (geneClass) {
+            // number gene
+            IntegerGene::class.java -> {
+                val minRange: Int
+                val maxRange: Int
+                if (format == "int8") {
+                    minRange = Byte.MIN_VALUE.toInt()
+                    maxRange = Byte.MAX_VALUE.toInt()
+                } else if (format == "int16") {
+                    minRange = Short.MIN_VALUE.toInt()
+                    maxRange = Short.MAX_VALUE.toInt()
+                } else {
+                    minRange = Integer.MIN_VALUE
+                    maxRange = Integer.MAX_VALUE
+                }
+
+                val minConstraint: Int?
+                val maxConstraint: Int?
+                if (options.enableConstraintHandling) {
+                    minConstraint = minimum?.intValueExact()
+                    maxConstraint = maximum?.intValueExact()
+                } else {
+                    minConstraint = null
+                    maxConstraint = null
+                }
+
+                val minValue = if (minConstraint != null) maxOf(minConstraint, minRange) else minRange
+                val maxValue = if (maxConstraint != null) minOf(maxConstraint, maxRange) else maxRange
+
+                IntegerGene(
+                    name,
+                    min = minValue,
+                    max = maxValue,
+                    maxInclusive = maxInclusive,
+                    minInclusive = minInclusive
+                )
+            }
+
+            LongGene::class.java -> LongGene(
+                name,
+                min = if (options.enableConstraintHandling) minimum?.longValueExact() else null,
+                max = if (options.enableConstraintHandling) maximum?.longValueExact() else null,
+                maxInclusive = maxInclusive,
+                minInclusive = minInclusive
+            )
+
+            FloatGene::class.java -> FloatGene(
+                name,
+                min = if (options.enableConstraintHandling) minimum?.toFloat() else null,
+                max = if (options.enableConstraintHandling) maximum?.toFloat() else null,
+                maxInclusive = maxInclusive,
+                minInclusive = minInclusive
+            )
+
+            DoubleGene::class.java -> DoubleGene(
+                name,
+                min = if (options.enableConstraintHandling) minimum?.toDouble() else null,
+                max = if (options.enableConstraintHandling) maximum?.toDouble() else null,
+                maxInclusive = maxInclusive,
+                minInclusive = minInclusive
+            )
+
+            BigDecimalGene::class.java -> BigDecimalGene(
+                name,
+                min = if (options.enableConstraintHandling) minimum else null,
+                max = if (options.enableConstraintHandling) maximum else null,
+                maxInclusive = maxInclusive,
+                minInclusive = minInclusive
+            )
+
+            BigIntegerGene::class.java -> BigIntegerGene(
+                name,
+                min = if (options.enableConstraintHandling) minimum?.toBigIntegerExact() else null,
+                max = if (options.enableConstraintHandling) maximum?.toBigIntegerExact() else null,
+                maxInclusive = maxInclusive,
+                minInclusive = minInclusive
+            )
+            // string, Base64StringGene and regex gene
+            StringGene::class.java -> buildStringGene(name, options, schema, isInPath)
+            Base64StringGene::class.java -> Base64StringGene(name, buildStringGene(name, options, schema, isInPath))
+            RegexGene::class.java -> {
+                /*
+                    TODO handle constraints for regex gene
+                    eg,  min and max
+                    also, isInPath
+                 */
+                RegexHandler.createGeneForEcma262(schema.pattern).apply { this.name = name }
+            }
+
+            ArrayGene::class.java -> {
+                if (collectionTemplate == null)
+                    throw IllegalArgumentException("cannot create ArrayGene when collectionTemplate is null")
+                ArrayGene(
+                    name,
+                    template = collectionTemplate,
+                    uniqueElements = if (options.enableConstraintHandling) schema.uniqueItems ?: false else false,
+                    minSize = if (options.enableConstraintHandling) schema.minItems else null,
+                    maxSize = if (options.enableConstraintHandling) schema.maxItems else null
+                )
+            }
+
+            else -> throw IllegalStateException("cannot create gene with constraints for gene:${geneClass.name}")
+        }
+
+        if (mainGene.description.isNullOrBlank()) {
+            mainGene.description = schema.description
+        }
+        return mainGene
     }
 
     private fun createGeneWithExampleAndDefault(
@@ -1734,7 +2410,9 @@ object RestActionBuilderV3 {
         }
 
         if (isRoot && refCache.containsKey(reference)) {
-            return refCache[reference]!!.copy()
+            val copy = refCache[reference]!!.copy()
+            copy.name = name
+            return copy
         }
 
         /*
@@ -1801,21 +2479,21 @@ object RestActionBuilderV3 {
         val seen = mutableSetOf<String>()
         val duplicates = mutableSetOf<String>()
 
-       operation.parameters.forEach {
+        operation.parameters.forEach {
 
             val p = if(it.`$ref` != null)
                 SchemaUtils.getReferenceParameter(schemaHolder,currentSchema, it.`$ref`, messages = messages)
-           else
-               it
-           if(p != null) {
-               val key = p.`in` + "_" + p.name
-               if (!seen.contains(key)) {
-                   seen.add(key)
-                   selection.add(p)
-               } else {
-                   duplicates.add(key)
-               }
-           }
+            else
+                it
+            if(p != null) {
+                val key = p.`in` + "_" + p.name
+                if (!seen.contains(key)) {
+                    seen.add(key)
+                    selection.add(p)
+                } else {
+                    duplicates.add(key)
+                }
+            }
         }
 
         if (duplicates.isNotEmpty()) {
@@ -1829,7 +2507,7 @@ object RestActionBuilderV3 {
     @Deprecated("should be removed, no longer used")
     fun getModelsFromSwagger(swagger: OpenAPI,
                              modelCluster: MutableMap<String, ObjectGene>,
-                            options: Options
+                             options: Options
     ) {
 //        modelCluster.clear()
 //
